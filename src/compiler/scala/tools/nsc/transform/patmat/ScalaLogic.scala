@@ -181,7 +181,16 @@ trait ScalaLogic extends Interface with LogicCore with LogicEquality with TreeAn
       // accessing after calling registerNull will result in inconsistencies
       lazy val domainSyms: Option[Set[Sym]] = domain map { _ map symForEqualsTo }
 
-      lazy val symForStaticTp: Option[Sym]  = symForEqualsTo.get(TypeConst(staticTpCheckable))
+      // accessing after calling registerNull will result in inconsistencies
+      // when this variable cannot be null,
+      //   we add the axiom that models that the type test `(x: T)` is true if T is x's static type
+      // when the variable may be null,
+      //   we refine the axiom to the implication `(x != null) => (x: T)`
+      lazy val symForStaticTp: Option[Sym]  = {
+        val sym = symForEqualsTo.get(TypeConst(staticTpCheckable))
+        if (mayBeNull) Or(propForEqualsTo(NullConst), sym)
+        else sym
+      }
 
       // don't access until all potential equalities have been registered using registerEquality
       private lazy val equalitySyms = {observed; symForEqualsTo.values.toList}

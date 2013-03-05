@@ -114,9 +114,6 @@ trait LogicEquality extends LogicCore {
       // call this to indicate null is part of the domain
       def registerNull(): Unit
 
-      // can this variable be null?
-      def mayBeNull: Boolean
-
       // compute the domain and return it (call registerNull first!)
       def domainSyms: Option[Set[Sym]]
 
@@ -221,12 +218,11 @@ trait LogicEquality extends LogicCore {
         // coverage is formulated as: A \/ B \/ C and the implications are
         v.domainSyms foreach { dsyms => addAxiom(\/(dsyms)) }
 
-        // when this variable cannot be null the equality corresponding to the type test `(x: T)`, where T is x's static type,
-        // is always true; when the variable may be null we use the implication `(x != null) => (x: T)` for the axiom
-        v.symForStaticTp foreach { symForStaticTp =>
-          if (v.mayBeNull) addAxiom(Or(v.propForEqualsTo(NullConst), symForStaticTp))
-          else addAxiom(symForStaticTp)
-        }
+        // when this variable cannot be null,
+        //   we add the axiom that models that the type test `(x: T)` is true if T is x's static type
+        // when the variable may be null,
+        //   we refine the axiom to the implication `(x != null) => (x: T)`
+        v.symForStaticTp foreach addAxiom
 
         v.implications foreach { case (sym, implied, excluded) =>
           // when sym is true, what must hold...
