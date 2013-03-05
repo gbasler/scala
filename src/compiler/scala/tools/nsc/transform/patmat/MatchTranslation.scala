@@ -14,14 +14,8 @@ import scala.reflect.internal.util.Statistics
  */
 trait MatchTranslation { self: PatternMatching  =>
   import PatternMatchingStats._
-  import global.{phase, currentRun, Symbol,
-    Apply, Bind, CaseDef, ClassInfoType, Ident, Literal, Match,
-    Alternative, Constant, EmptyTree, Select, Star, This, Throw, Typed, UnApply,
-    Type, MethodType, WildcardType, PolyType, ErrorType, NoType, TypeRef, typeRef,
-    Name, NoSymbol, Position, Tree, atPos, glb, rootMirror, treeInfo, nme, Transformer,
-    elimAnonymousClass, asCompactDebugString, hasLength}
-  import global.definitions.{ThrowableClass, SeqClass, ScalaPackageClass, BooleanClass, UnitClass, RepeatedParamClass,
-    repeatedToSeq, isRepeatedParamType, getProductArgs}
+  import global._ //{phase, currentRun, Symbol, Apply, Bind, CaseDef, ClassInfoType, Ident, Literal, Match, Alternative, Constant, EmptyTree, Select, Star, This, Throw, Typed, UnApply, Type, MethodType, WildcardType, PolyType, ErrorType, NoType, TypeRef, typeRef, Name, NoSymbol, Position, Tree, atPos, glb, rootMirror, treeInfo, nme, Transformer, elimAnonymousClass, asCompactDebugString, hasLength}
+  import global.definitions._ // {ThrowableClass, SeqClass, ScalaPackageClass, BooleanClass, UnitClass, RepeatedParamClass, repeatedToSeq, isRepeatedParamType, getProductArgs}
   import global.analyzer.{ErrorUtils, formalTypes}
 
   trait MatchTranslator extends TreeMakers {

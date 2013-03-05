@@ -10,7 +10,6 @@ import scala.tools.nsc.symtab.Flags.SYNTHETIC
 import scala.language.postfixOps
 import scala.reflect.internal.util.Statistics
 import scala.reflect.internal.util.Position
-import scala.reflect.internal.util.NoPosition
 
 /** Factory methods used by TreeMakers to make the actual trees.
  *
@@ -19,9 +18,7 @@ import scala.reflect.internal.util.NoPosition
  */
 trait MatchCodeGen extends Interface {
   import PatternMatchingStats._
-  import global.{nme, treeInfo, definitions, gen, Tree, Type, Symbol, NoSymbol,
-    appliedType, NoType, MethodType, newTermName, Name,
-    Block, Literal, Constant, EmptyTree, Function, Typed, ValDef, LabelDef}
+  import global._ // {nme, treeInfo, definitions, gen, Tree, Type, Symbol, NoSymbol, appliedType, NoType, MethodType, newTermName, Name, Block, Literal, Constant, EmptyTree, Function, Typed, ValDef, LabelDef}
   import definitions._
 
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -101,7 +101,7 @@ trait Debugging {
 }
 
 trait Interface extends ast.TreeDSL {
-  import global.{newTermName, analyzer, Type, ErrorType, Symbol, Tree}
+  import global.{analyzer, newTermName, Type, ErrorType, NoType, Symbol, Tree, Transformer, Ident}
   import analyzer.Typer
 
   // 2.10/2.11 compatibility
@@ -199,8 +199,6 @@ trait Interface extends ast.TreeDSL {
     }
 
     class Substitution(val from: List[Symbol], val to: List[Tree]) {
-      import global.{Transformer, Ident, NoType}
-
       // We must explicitly type the trees that we replace inside some other tree, since the latter may already have been typed,
       // and will thus not be retyped. This means we might end up with untyped subtrees inside bigger, typed trees.
       def apply(tree: Tree): Tree = {

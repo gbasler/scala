@@ -11,7 +11,6 @@ import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.reflect.internal.util.Position
-import scala.reflect.internal.util.NoPosition
 
 /** Optimize and analyze matches based on their TreeMaker-representation.
  *
@@ -21,11 +20,7 @@ import scala.reflect.internal.util.NoPosition
  */
 trait MatchOptimization extends MatchTreeMaking with MatchAnalysis {
   import PatternMatchingStats._
-  import global.{Tree, Type, Symbol, NoSymbol, CaseDef, atPos,
-    ConstantType, Literal, Constant, gen, EmptyTree,
-    Typed, treeInfo, nme, Ident,
-    Apply, If, Bind, lub, Alternative, deriveCaseDef, Match, MethodType, LabelDef, TypeTree, Throw}
-
+  import global._ // {Tree, Type, Symbol, NoSymbol, CaseDef, atPos, ConstantType, Literal, Constant, gen, EmptyTree, Typed, treeInfo, nme, Ident, Apply, If, Bind, lub, Alternative, deriveCaseDef, Match, MethodType, LabelDef, TypeTree, Throw}
   import global.definitions._
 
 

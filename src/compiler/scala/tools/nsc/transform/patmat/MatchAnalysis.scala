@@ -12,10 +12,7 @@ import scala.reflect.internal.util.Statistics
 import scala.reflect.internal.util.Position
 
 trait TreeAndTypeAnalysis extends Debugging {
-  import global.{Tree, Type, Symbol, definitions, analyzer,
-    ConstantType, Literal, Constant,  appliedType, WildcardType, TypeRef, ModuleClassSymbol,
-    nestedMemberType, TypeMap, Ident}
-
+  import global._ // {Ident, Tree, Type, Symbol, definitions, analyzer, ConstantType, Literal, Constant, appliedType, WildcardType, TypeRef, ModuleClassSymbol, nestedMemberType, TypeMap}
   import definitions._
   import analyzer.Typer
 
@@ -126,7 +123,7 @@ trait TreeAndTypeAnalysis extends Debugging {
 }
 
 trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchTreeMaking {
-  import global.{Tree, Type, NoType, Symbol, NoSymbol, ConstantType, Literal, Constant, Ident, UniqueType, RefinedType, EmptyScope}
+  import global._ // {Tree, Type, NoType, Symbol, NoSymbol, ConstantType, Literal, Constant, Ident, UniqueType, RefinedType, EmptyScope}
   import global.definitions.{ListClass, NilModule}
 
   /**

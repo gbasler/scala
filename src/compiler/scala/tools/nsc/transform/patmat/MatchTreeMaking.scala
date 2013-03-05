@@ -11,7 +11,6 @@ import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.reflect.internal.util.Position
-import scala.reflect.internal.util.NoPosition
 
 /** Translate our IR (TreeMakers) into actual Scala Trees using the factory methods in MatchCodeGen.
  *
@@ -20,12 +19,8 @@ import scala.reflect.internal.util.NoPosition
  */
 trait MatchTreeMaking extends MatchCodeGen with Debugging {
   import PatternMatchingStats._
-  import global.{Tree, Type, Symbol, CaseDef, atPos, settings,
-    Select, Block, ThisType, SingleType, NoPrefix, NoType, needsOuterTest,
-    ConstantType, Literal, Constant, gen, This, EmptyTree, map2, NoSymbol, Traverser,
-    Function, Typed, treeInfo, TypeRef, DefTree, Ident, nme}
-
-  import global.definitions.{SomeClass, AnyRefClass, UncheckedClass, BooleanClass}
+  import global._ // {Tree, Type, Symbol, CaseDef, atPos, settings, Select, Block, ThisType, SingleType, NoPrefix, NoType, needsOuterTest, ConstantType, Literal, Constant, gen, This, EmptyTree, map2, NoSymbol, Traverser, Function, Typed, treeInfo, TypeRef, DefTree, Ident, nme}
+  import global.definitions.{UncheckedClass, AnyRefClass, BooleanClass, SomeClass}
 
   final case class Suppression(exhaustive: Boolean, unreachable: Boolean)
   object Suppression {
