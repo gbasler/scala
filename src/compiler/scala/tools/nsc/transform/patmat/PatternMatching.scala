@@ -84,10 +84,10 @@ trait PatternMatching extends Transform with TypingTransformers
     def analyzeCases(prevBinder: Symbol, cases: List[List[TreeMaker]], pt: Type, suppression: Suppression): Unit = {}
   }
 
-  class OptimizingMatchTranslator(val typer: analyzer.Typer) extends MatchTranslator
+  class OptimizingMatchTranslator(val typer: analyzer.Typer) extends SimpleSolver
+                                                             with MatchTranslator
                                                              with MatchOptimizer
                                                              with MatchAnalyzer
-                                                             with Solver
 }
 
 trait Debugging {
@@ -97,6 +97,29 @@ trait Debugging {
   object debug {
     val printPatmat = global.settings.Ypatmatdebug.value
     @inline final def patmat(s: => String) = if (printPatmat) println(s)
+  }
+
+  private def max(xs: Seq[Int]) = if (xs isEmpty) 0 else xs max
+  private def alignedColumns(cols: Seq[AnyRef]): Seq[String] = {
+    def toString(x: AnyRef) = if (x eq null) "" else x.toString
+    if (cols.isEmpty || cols.tails.isEmpty) cols map toString
+    else {
+      val colLens = cols map (c => toString(c).length)
+      val maxLen = max(colLens)
+      val avgLen = colLens.sum/colLens.length
+      val goalLen = maxLen min avgLen*2
+      def pad(s: String) = {
+        val toAdd = ((goalLen - s.length) max 0) + 2
+        (" " * (toAdd/2)) + s + (" " * (toAdd/2 + (toAdd%2)))
+      }
+      cols map (x => pad(toString(x)))
+    }
+  }
+
+  def alignAcrossRows(xss: List[List[AnyRef]], sep: String, lineSep: String = "\n"): String = {
+    val maxLen = max(xss map (_.length))
+    val padded = xss map (xs => xs ++ List.fill(maxLen - xs.length)(null))
+    padded.transpose.map(alignedColumns).transpose map (_.mkString(sep)) mkString(lineSep)
   }
 }
 

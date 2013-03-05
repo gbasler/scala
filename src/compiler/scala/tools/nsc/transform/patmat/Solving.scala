@@ -10,10 +10,10 @@ import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 
 // naive CNF translation and simple DPLL solver
-trait Solving extends Logic {
+trait Solving extends LogicCore {
   import PatternMatchingStats._
-  trait CNF extends PropositionalLogic {
 
+  trait CNF extends PropositionalLogic with SolverInterface {
     /** Override Array creation for efficiency (to not go through reflection). */
     private implicit val clauseTag: scala.reflect.ClassTag[Clause] = new scala.reflect.ClassTag[Clause] {
       def runtimeClass: java.lang.Class[Clause] = classOf[Clause]
@@ -45,7 +45,7 @@ trait Solving extends Logic {
 
     // throws an AnalysisBudget.Exception when the prop results in a CNF that's too big
     // TODO: be smarter/more efficient about this (http://lara.epfl.ch/w/sav09:tseitin_s_encoding)
-    def eqFreePropToSolvable(p: Prop): Formula = {
+    def propToSolvable(p: Prop): Formula = {
       def negationNormalFormNot(p: Prop, budget: Int): Prop =
         if (budget <= 0) throw AnalysisBudget.exceeded
         else p match {
@@ -122,7 +122,7 @@ trait Solving extends Logic {
   }
 
   // simple solver using DPLL
-  trait Solver extends CNF {
+  class SimpleSolver extends CNF {
     // a literal is a (possibly negated) variable
     def Lit(sym: Sym, pos: Boolean = true) = new Lit(sym, pos)
     class Lit(val sym: Sym, val pos: Boolean) {

@@ -122,7 +122,7 @@ trait TreeAndTypeAnalysis extends Debugging {
   }
 }
 
-trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchTreeMaking {
+trait MatchApproximation extends MatchTreeMaking with ScalaLogic {
   import global._ // {Tree, Type, NoType, Symbol, NoSymbol, ConstantType, Literal, Constant, Ident, UniqueType, RefinedType, EmptyScope}
   import global.definitions.{ListClass, NilModule}
 
@@ -130,7 +130,7 @@ trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchT
    * Represent a match as a formula in propositional logic that encodes whether the match matches (abstractly: we only consider types)
    *
    */
-  trait MatchApproximator extends TreeMakers with TreesAndTypesDomain {
+  trait MatchApproximator extends TreeMakers with TreesAndTypesLogic {
     object Test {
       var currId = 0
     }
@@ -464,11 +464,11 @@ trait MatchAnalysis extends MatchApproximation {
         showTreeMakers(cases)
 
         // debug.patmat("\nvars:\n"+ (vars map (_.describe) mkString ("\n")))
-        // debug.patmat("\nmatchFails as CNF:\n"+ cnfString(propToSolvable(matchFails)))
+        // debug.patmat("\nmatchFails as CNF:\n"+ cnfString(eqPropToSolvable(matchFails)))
 
         try {
           // find the models (under which the match fails)
-          val matchFailModels = findAllModelsFor(propToSolvable(matchFails))
+          val matchFailModels = findAllModelsFor(eqPropToSolvable(matchFails))
 
           val scrutVar = Var(prevBinderTree)
           val counterExamples = matchFailModels.map(modelToCounterExample(scrutVar))
