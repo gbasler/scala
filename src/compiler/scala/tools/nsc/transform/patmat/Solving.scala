@@ -10,7 +10,7 @@ import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 
 // naive CNF translation and simple DPLL solver
-trait Solving extends LogicCore {
+trait Solving extends Logic {
   import PatternMatchingStats._
 
   trait CNF extends PropositionalLogic with SolverInterface {

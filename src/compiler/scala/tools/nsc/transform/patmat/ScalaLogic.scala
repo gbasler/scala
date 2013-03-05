@@ -12,7 +12,7 @@ import scala.collection.mutable
 import scala.reflect.internal.util.Position
 import scala.reflect.internal.util.HashSet
 
-trait ScalaLogic extends Interface with LogicCore with LogicEquality with TreeAndTypeAnalysis {
+trait ScalaLogic extends Interface with Logic with Equality with TreeAndTypeAnalysis {
   trait TreesAndTypesLogic extends EquationalLogic with CheckableTreeAndTypeAnalysis {
     import global.{Type, Tree}
 

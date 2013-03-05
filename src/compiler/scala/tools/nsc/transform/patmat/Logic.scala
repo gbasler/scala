@@ -11,7 +11,7 @@ import scala.collection.mutable
 import scala.reflect.internal.util.HashSet
 
 
-trait LogicCore extends Debugging {
+trait Logic extends Debugging {
   // http://www.cis.upenn.edu/~cis510/tcl/chap3.pdf
   // http://users.encs.concordia.ca/~ta_ahmed/ms_thesis.pdf
   // propositional logic with constants and equality
@@ -102,7 +102,7 @@ trait LogicCore extends Debugging {
   }
 }
 
-trait LogicEquality extends LogicCore {
+trait Equality extends Logic {
   trait EquationalLogic extends PropositionalLogic with SolverInterface {
     case class Eq(p: Var, q: Const) extends Prop
 
