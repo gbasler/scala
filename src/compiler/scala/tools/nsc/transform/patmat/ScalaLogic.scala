@@ -85,7 +85,7 @@ trait ScalaLogic extends Interface with Logic with Equality with TreeAndTypeAnal
        * for exhaustivity, we really only need implication (e.g., V = 1 implies that V = 1 /\ V = Int, if both tests occur in the match,
        * and thus in this variable's equality symbols), but reachability also requires us to model things like V = 1 precluding V = "1"
        */
-      lazy val implications = {
+      lazy val symsImpliedAndExcluded = {
         /** when we know V = C, which other equalities must hold
          *
          * in general, equality to some type implies equality to its supertypes

@@ -124,8 +124,8 @@ trait Equality extends Logic {
       def propForEqualsTo(c: Const): Prop
 
       // populated by registerEquality
-      // once implications has been called, must not call registerEquality anymore
-      def implications: List[(Sym, List[Sym], List[Sym])]
+      // once symsImpliedAndExcluded has been called, must not call registerEquality anymore
+      def symsImpliedAndExcluded: List[(Sym, List[Sym], List[Sym])]
     }
 
     val NullConst: Const
@@ -219,7 +219,7 @@ trait Equality extends Logic {
         //   we refine the axiom to the implication `(x != null) => (x: T)`
         v.staticTypeTestAxiom foreach addAxiom
 
-        v.implications foreach { case (sym, implied, excluded) =>
+        v.symsImpliedAndExcluded foreach { case (sym, implied, excluded) =>
           // when sym is true, what must hold...
           implied  foreach (impliedSym  => addAxiom(Or(Not(sym), impliedSym)))
           // ... and what must not?
