@@ -111,15 +111,12 @@ trait Equality extends Logic {
       // indicate we may later require a prop for V = C
       def registerEquality(c: Const): Unit
 
-      // call this to indicate null is part of the domain
-      def registerNull(): Unit
-
-      // compute the domain and return it (call registerNull first!)
+      // compute the domain and return it
       def domainSyms: Option[Set[Sym]]
 
-      // the symbol for this variable being equal to its statically known type
-      // (only available if registerEquality has been called for that type before)
-      def symForStaticTp: Option[Sym]
+      // the proposition for this variable being equal to its statically known type
+      // (don't call until all equalities for this variable have been registered using registerEquality)
+      def staticTypeTestAxiom: Option[Prop]
 
       // for this var, call it V, turn V = C into the equivalent proposition in boolean logic
       // registerEquality(c) must have been called prior to this call
@@ -155,7 +152,7 @@ trait Equality extends Logic {
 
     // may throw an AnalysisBudget.Exception
     def eqPropToSolvable(p: Prop): Formula = {
-      val (eqAxioms, pure :: Nil) = removeVarEq(List(p), modelNull = false)
+      val (eqAxioms, pure :: Nil) = removeVarEq(List(p))
       andFormula(eqAxioms, pure)
     }
 
@@ -177,7 +174,7 @@ trait Equality extends Logic {
     // TODO: for V1 representing x1 and V2 standing for x1.head, encode that
     //       V1 = Nil implies -(V2 = Ci) for all Ci in V2's domain (i.e., it is unassignable)
     // may throw an AnalysisBudget.Exception
-    def removeVarEq(props: List[Prop], modelNull: Boolean = false): (Formula, List[Formula]) = {
+    def removeVarEq(props: List[Prop]): (Formula, List[Formula]) = {
       import scala.reflect.internal.util.Statistics
       import PatternMatchingStats._
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaVarEq) else null
@@ -201,8 +198,6 @@ trait Equality extends Logic {
       }
 
       props foreach gatherEqualities.apply
-      // TODO: move modeling of null to symForStaticTp in Var in ScalaLogic
-      if (modelNull) vars foreach (_.registerNull)
 
       val pure = props map (p => propToSolvable(rewriteEqualsToProp(p)))
 
@@ -222,7 +217,7 @@ trait Equality extends Logic {
         //   we add the axiom that models that the type test `(x: T)` is true if T is x's static type
         // when the variable may be null,
         //   we refine the axiom to the implication `(x != null) => (x: T)`
-        v.symForStaticTp foreach addAxiom
+        v.staticTypeTestAxiom foreach addAxiom
 
         v.implications foreach { case (sym, implied, excluded) =>
           // when sym is true, what must hold...

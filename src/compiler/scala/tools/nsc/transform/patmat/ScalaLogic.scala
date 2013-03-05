@@ -25,10 +25,10 @@ trait ScalaLogic extends Interface with Logic with Equality with TreeAndTypeAnal
 
       def resetUniques() = {_nextId = 0; uniques.clear()}
       private val uniques = new mutable.HashMap[Tree, Var]
-      def apply(x: Tree): Var = uniques getOrElseUpdate(x, new Var(x, x.tpe))
+      def apply(x: Tree, modelNull: Boolean): Var = uniques getOrElseUpdate(x, new Var(x, x.tpe, modelNull))
       def unapply(v: Var) = Some(v.path)
     }
-    class Var(val path: Tree, staticTp: Type) extends AbsVar {
+    class Var(val path: Tree, staticTp: Type, modelNull: Boolean) extends AbsVar {
       private[this] val id: Int = Var.nextId
 
       // private[this] var canModify: Option[Array[StackTraceElement]] = None
@@ -42,9 +42,7 @@ trait ScalaLogic extends Interface with Logic with Equality with TreeAndTypeAnal
       // when looking at the domain, we only care about types we can check at run time
       val staticTpCheckable: Type = checkableType(staticTp)
 
-      private[this] var _mayBeNull = false
-      def registerNull(): Unit = { ensureCanModify; if (NullTp <:< staticTpCheckable) _mayBeNull = true }
-      def mayBeNull: Boolean = _mayBeNull
+      lazy val mayBeNull: Boolean = modelNull && NullTp <:< staticTpCheckable
 
       // case None => domain is unknown,
       // case Some(List(tps: _*)) => domain is exactly tps
@@ -178,24 +176,22 @@ trait ScalaLogic extends Interface with Logic with Equality with TreeAndTypeAnal
         }
       }
 
-      // accessing after calling registerNull will result in inconsistencies
       lazy val domainSyms: Option[Set[Sym]] = domain map { _ map symForEqualsTo }
 
-      // accessing after calling registerNull will result in inconsistencies
       // when this variable cannot be null,
-      //   we add the axiom that models that the type test `(x: T)` is true if T is x's static type
+      //   the type test `(x: T)`, where T is x's statically known type, is always true
       // when the variable may be null,
-      //   we refine the axiom to the implication `(x != null) => (x: T)`
-      lazy val symForStaticTp: Option[Sym]  = {
-        val sym = symForEqualsTo.get(TypeConst(staticTpCheckable))
-        if (mayBeNull) Or(propForEqualsTo(NullConst), sym)
-        else sym
-      }
+      //   we refine this to the implication `(x != null) => (x: T)`
+      lazy val staticTypeTestAxiom: Option[Prop] =
+        symForEqualsTo.get(TypeConst(staticTpCheckable)) match {
+          case Some(sym) if mayBeNull => Some(Or(propForEqualsTo(NullConst), sym))
+          case sym => sym
+        }
 
       // don't access until all potential equalities have been registered using registerEquality
       private lazy val equalitySyms = {observed; symForEqualsTo.values.toList}
 
-      // don't call until all equalities have been registered and registerNull has been called (if needed)
+      // don't call until all equalities have been registered
       def describe = {
         def domain_s = domain match {
           case Some(d) => d mkString (" ::= ", " | ", "// "+ symForEqualsTo.keys)

@@ -151,25 +151,28 @@ trait MatchApproximation extends MatchTreeMaking with ScalaLogic {
 
     class TreeMakersToPropsIgnoreNullChecks(root: Symbol) extends TreeMakersToProps(root) {
       override def uniqueNonNullProp(p: Tree): Prop = True
+      override def mkVar(p: Tree) = Var(p, modelNull = false)
     }
 
     // returns (tree, tests), where `tree` will be used to refer to `root` in `tests`
     class TreeMakersToProps(val root: Symbol) {
       prepareNewAnalysis() // reset hash consing for Var and Const
 
+      def mkVar(p: Tree) = Var(p, modelNull = true)
+
       private[this] val uniqueEqualityProps = new scala.collection.mutable.HashMap[(Tree, Tree), Eq]
       private[this] val uniqueNonNullProps = new scala.collection.mutable.HashMap[Tree, Not]
       private[this] val uniqueTypeProps = new scala.collection.mutable.HashMap[(Tree, Type), Eq]
 
       def uniqueEqualityProp(testedPath: Tree, rhs: Tree): Prop =
-        uniqueEqualityProps getOrElseUpdate((testedPath, rhs), Eq(Var(testedPath), ValueConst(rhs)))
+        uniqueEqualityProps getOrElseUpdate((testedPath, rhs), Eq(mkVar(testedPath), ValueConst(rhs)))
 
       // overridden in TreeMakersToPropsIgnoreNullChecks
       def uniqueNonNullProp (testedPath: Tree): Prop =
-        uniqueNonNullProps getOrElseUpdate(testedPath, Not(Eq(Var(testedPath), NullConst)))
+        uniqueNonNullProps getOrElseUpdate(testedPath, Not(Eq(mkVar(testedPath), NullConst)))
 
       def uniqueTypeProp(testedPath: Tree, pt: Type): Prop =
-        uniqueTypeProps getOrElseUpdate((testedPath, pt), Eq(Var(testedPath), TypeConst(checkableType(pt))))
+        uniqueTypeProps getOrElseUpdate((testedPath, pt), Eq(mkVar(testedPath), TypeConst(checkableType(pt))))
 
       // a variable in this set should never be replaced by a tree that "does not consist of a selection on a variable in this set" (intuitively)
       private val pointsToBound = mutable.HashSet(root)
@@ -377,8 +380,8 @@ trait MatchAnalysis extends MatchApproximation {
       val propsCasesFail = approximate(False) map (t => Not(caseWithoutBodyToProp(t)))
 
       try {
-        val (eqAxiomsFail, symbolicCasesFail) = removeVarEq(propsCasesFail, modelNull = true)
-        val (eqAxiomsOk, symbolicCasesOk)     = removeVarEq(propsCasesOk,   modelNull = true)
+        val (eqAxiomsFail, symbolicCasesFail) = removeVarEq(propsCasesFail)
+        val (eqAxiomsOk, symbolicCasesOk)     = removeVarEq(propsCasesOk)
         val eqAxioms = simplifyFormula(andFormula(eqAxiomsOk, eqAxiomsFail)) // I'm pretty sure eqAxiomsOk == eqAxiomsFail, but not 100% sure.
 
         val prefix   = formulaBuilder
@@ -470,7 +473,7 @@ trait MatchAnalysis extends MatchApproximation {
           // find the models (under which the match fails)
           val matchFailModels = findAllModelsFor(eqPropToSolvable(matchFails))
 
-          val scrutVar = Var(prevBinderTree)
+          val scrutVar = Var(prevBinderTree, modelNull = false)
           val counterExamples = matchFailModels.map(modelToCounterExample(scrutVar))
 
           val pruned = CounterExample.prune(counterExamples).map(_.toString).sorted
