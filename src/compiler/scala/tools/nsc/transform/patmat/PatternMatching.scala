@@ -41,7 +41,7 @@ trait PatternMatching extends Transform with TypingTransformers
                       with MatchTreeMaking
                       with MatchCodeGen
                       with ScalaLogic
-                      with Solving
+                      with Sat4JSolving
                       with MatchAnalysis
                       with MatchOptimization {
   import global._
@@ -84,7 +84,7 @@ trait PatternMatching extends Transform with TypingTransformers
     def analyzeCases(prevBinder: Symbol, cases: List[List[TreeMaker]], pt: Type, suppression: Suppression): Unit = {}
   }
 
-  class OptimizingMatchTranslator(val typer: analyzer.Typer) extends SimpleSolver
+  class OptimizingMatchTranslator(val typer: analyzer.Typer) extends SatSolver
                                                              with MatchTranslator
                                                              with MatchOptimizer
                                                              with MatchAnalyzer

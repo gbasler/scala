@@ -6,21 +6,17 @@
 package scala.tools.nsc.transform.patmat
 
 import scala.collection.mutable
-import scala.reflect.internal.util.Statistics
-import org.sat4j.specs.ContradictionException
-import org.sat4j.specs.ISolver
+import org.sat4j.specs.{IVec, IVecInt, TimeoutException, ContradictionException}
 import org.sat4j.minisat.SolverFactory
-import org.sat4j.core.VecInt
-import org.sat4j.specs.IVecInt
-import org.sat4j.specs.IProblem
-import org.sat4j.specs.IVec
-import org.sat4j.minisat.constraints.cnf.Clauses
-import scala.collection.immutable.Nil
+import org.sat4j.core.{Vec, VecInt}
 import scala.annotation.tailrec
-
+import org.sat4j.tools.ModelIterator
 
 /**
  * Use ALL-SAT in order to check pattern matches for exhaustivity.
+ *
+ * The Tseitin transformation trades an exponential blow-up
+ * in formula size for additional variables (linear).
  *
  * Improvements vs copied code:
  * - don't need new variable for negation
@@ -31,36 +27,16 @@ import scala.annotation.tailrec
 
 trait Sat4JSolving extends Logic {
 
-  import PatternMatchingStats._
-
-  //    class FormulaBuilder {
-  //      private[this] val problem = SolverFactory.newDefault
-  //
-  //      /** Adds a clause in the problem. */
-  //      def +=(clause: IVecInt) = {
-  //        problem addClause clause
-  //        clause.clear
-  //        this
-  //      }
-  //
-  //      def solve: Status = {
-  //        try {
-  //          if (problem.isSatisfiable)
-  //            Satisfiable
-  //          else
-  //            Unsatisfiable
-  //        } catch {
-  //          case _: Exception => Unknown
-  //        }
-  //      }
-  //
-  //      def model = {
-  //        problem.model
-  //      }
-  //    }
-
-
   trait TseitinCNF extends PropositionalLogic with SolverInterface {
+
+    object SATSolverBudget {
+
+      abstract class Exception(val advice: String) extends RuntimeException("SAT solver error")
+
+      object timeout extends Exception(
+        s"(The SAT solver run into a timeout. Please report a simplified example to JIRA.")
+
+    }
 
     import scala.collection.mutable.ArrayBuffer
 
@@ -82,7 +58,10 @@ trait Sat4JSolving extends Logic {
 
     def simplifyFormula(a: Formula) = a
 
-    //    def cnfString(f: Formula) = alignAcrossRows(f map (_.toList) toList, "\\/", " /\\\n")
+    def cnfString(f: Formula): String = {
+      val cnf = convert(f)._1
+      cnf.dimacs
+    }
 
     def propToSolvable(p: Prop): Formula = {
       def formulaForProp(p: Prop): FormulaForCNF = p match {
@@ -99,7 +78,7 @@ trait Sat4JSolving extends Logic {
       builder
     }
 
-    def convert(f: Formula) = {
+    def convert(f: Formula): (Cnf, Map[Sym, Lit]) = {
       type Cache = Map[FormulaForCNF, Lit]
 
       val cache = mutable.Map[FormulaForCNF, Lit]()
@@ -172,7 +151,6 @@ trait Sat4JSolving extends Logic {
       def lnot(a: Lit): Lit = -a
 
       def isAlreadyInCnf(f: FormulaForCNF): Option[Seq[Cnf#Clause]] = {
-        import FormulaForCNF._
 
         def isDisjunction(f: FormulaForCNF): Option[Cnf#Clause] = f match {
           case FormulaForCNF.Or(fv) =>
@@ -235,71 +213,113 @@ trait Sat4JSolving extends Logic {
           }
       }
 
-      cnf.clauses
+      // all variables are guaranteed to be in cache
+      // (doesn't mean they will appear in the resulting formula)
+      val litForSym: Map[Sym, Lit] = {
+        cache.collect {
+          case (v: FormulaForCNF.Var[_], lit) => v.sym.asInstanceOf[Sym] -> lit
+        }
+      }.toMap
+
+      (cnf, litForSym)
     }
-
-    def findModelFor(f: Formula): Model
-
-    def findAllModelsFor(f: Formula): List[Model]
-
-
-    /** Returns true iff the given expression is already in conjunctive normal form. */
-    //    def isAlreadyInCnf(f: Prop): (Boolean, Option[List[List[Prop]]]) = f match {
-    //      case And(b1, b2) => {
-    //        val (r1, l1) = isAlreadyInCnf(b1)
-    //        if (r1) {
-    //          val (r2, l2) = isAlreadyInCnf(b2)
-    //          if (r2) (true, Some(l1.get ++ l2.get))
-    //          else (false, None)
-    //        } else (false, None)
-    //      }
-    //      case Or(b1, b2) => isDisjunction(f)
-    //      case _          => isLiteral(f)
-    //    }
-    //
-    //    def isDisjunction(f: Prop): (Boolean, Option[List[List[Prop]]]) = f match {
-    //      case Or(b1, b2) => {
-    //        val (r1, l1) = isDisjunction(b1)
-    //        if (r1) {
-    //          val (r2, l2) = isDisjunction(b2)
-    //          if (r2) (true, Some(List(l1.get(0) ++ l2.get(0))))
-    //          else (false, None)
-    //        } else (false, None)
-    //      }
-    //      case _ => isLiteral(f)
-    //    }
-
 
   }
 
-  class Solver extends TseitinCNF {
+  class SatSolver extends TseitinCNF {
 
-    //    def isSat[U](problem: Formula): (Boolean, Option[Map[U, Boolean]]) = {
-    //      try {
-    //        val res = problem.solve
-    //        res match {
-    //          case Satisfiable => {
-    //            val listeBoolExp = problem.model.toList map { x => if (x > 0) (litToSym(x) -> true) else (litToSym(-x) -> false) }
-    //            val mapIdentBool = listeBoolExp filter (x => x match {
-    //              case (s: AnonymousVariable, _) => false
-    //              case (Lit(_), _)             => true
-    //              case _                         => false
-    //            })
-    //            val mapUBool = mapIdentBool map (z => z match {
-    //              case (Lit(s), b) => (s, b)
-    //              case _                => throw new IllegalStateException
-    //            })
-    //            (true, Some(mapUBool.toMap))
-    //          }
-    //          case Unsatisfiable => (false, None)
-    //          case _             => throw new IllegalStateException("Got a time out")
-    //        }
-    //      } catch {
-    //        case e: ContradictionException => (false, None)
-    //      }
-    //    }
+    val EmptyModel = Map.empty[Sym, Boolean]
+    val NoModel: Model = null
 
+    def findModelFor(f: Formula): Model = {
+      val (cnf, litForSym) = convert(f)
 
+      val solver = new ModelIterator(SolverFactory.newDefault())
+
+      solver.addAllClauses(clausesForCnf(cnf))
+
+      try {
+        if (solver.isSatisfiable()) {
+          val model: Array[Int] = solver.model()
+
+          // don't check intermediate vars
+          val model0 = model.toSet
+          require(model.length == model0.size, "literal lost")
+
+          def polarityForLiteral(lit: Lit) = {
+            if (model0.contains(lit.v)) {
+              true
+            } else if (model0.contains(-lit.v)) {
+              false
+            } else {
+              // literal has no influence on formula
+              sys.error(s"Literal not found ${lit} (should assume nondet)")
+            }
+          }
+
+          litForSym.map {
+            case (v, l) => v -> polarityForLiteral(l)
+          }.toMap
+        } else {
+          NoModel
+        }
+      } catch {
+        case e: ContradictionException =>
+          // constant propagation should prevent this from happening
+          sys.error("Formula trivially UNSAT, should not happen, please report error.")
+        case e: TimeoutException       =>
+          throw SATSolverBudget.timeout
+      }
+    }
+
+    def findAllModelsFor(f: Formula): List[Model] = {
+      val (cnf, litForSym) = convert(f)
+
+      val solver = new ModelIterator(SolverFactory.newDefault())
+
+      solver.addAllClauses(clausesForCnf(cnf))
+
+      try {
+        @tailrec
+        def allModels(acc: List[Model] = Nil): List[Model] = if (solver.isSatisfiable()) {
+          val model: Array[Int] = solver.model()
+
+          // don't check intermediate vars
+          val model0 = model.toSet
+          require(model.length == model0.size, "literal lost")
+
+          def polarityForLiteral(lit: Lit) = {
+            if (model0.contains(lit.v)) {
+              true
+            } else if (model0.contains(-lit.v)) {
+              false
+            } else {
+              // literal has no influence on formula
+              sys.error(s"Literal not found ${lit} (should assume nondet)")
+            }
+          }
+
+          val valuation: Model = litForSym.map {
+            case (v, l) => v -> polarityForLiteral(l)
+          }.toMap
+          allModels(valuation :: acc)
+        } else {
+          acc
+        }
+        allModels()
+      } catch {
+        case e: ContradictionException =>
+          // constant propagation should prevent this from happening
+          sys.error("Formula trivially UNSAT, should not happen, please report error.")
+        case e: TimeoutException       =>
+          throw SATSolverBudget.timeout
+      }
+    }
+
+    private def clausesForCnf(cnf: Cnf): IVec[IVecInt] = {
+      val clauses: Array[IVecInt] = cnf.clauses.map(clause => new VecInt(clause.map(_.dimacs).toArray)).toArray
+      new Vec(clauses)
+    }
   }
 
 }

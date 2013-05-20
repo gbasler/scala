@@ -22,8 +22,8 @@ object FormulaForCNF {
     override def toString: String = s"!${a}"
   }
 
-  final case class Var[S](name: S) extends FormulaForCNF {
-    override def toString: String = name.toString
+  final case class Var[S](sym: S) extends FormulaForCNF {
+    override def toString: String = sym.toString
   }
 
   case object True extends FormulaForCNF {
