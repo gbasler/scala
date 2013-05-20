@@ -6,8 +6,8 @@
 package scala.tools.nsc.transform.patmat
 
 import scala.collection.mutable
-import org.sat4j.specs.{IVec, IVecInt, TimeoutException, ContradictionException}
 import org.sat4j.minisat.SolverFactory
+import org.sat4j.specs.{IVec, IVecInt, TimeoutException, ContradictionException}
 import org.sat4j.core.{Vec, VecInt}
 import scala.annotation.tailrec
 import org.sat4j.tools.ModelIterator
@@ -236,9 +236,9 @@ trait Sat4JSolving extends Logic {
 
       val solver = new ModelIterator(SolverFactory.newDefault())
 
-      solver.addAllClauses(clausesForCnf(cnf))
-
       try {
+        solver.addAllClauses(clausesForCnf(cnf))
+
         if (solver.isSatisfiable()) {
           val model: Array[Int] = solver.model()
 
@@ -265,8 +265,8 @@ trait Sat4JSolving extends Logic {
         }
       } catch {
         case e: ContradictionException =>
-          // constant propagation should prevent this from happening
-          sys.error("Formula trivially UNSAT, should not happen, please report error.")
+          // TODO not sure if it's ok for this to happen since we have constant propagation
+          NoModel
         case e: TimeoutException       =>
           throw SATSolverBudget.timeout
       }
@@ -276,8 +276,6 @@ trait Sat4JSolving extends Logic {
       val (cnf, litForSym) = convert(f)
 
       val solver = new ModelIterator(SolverFactory.newDefault())
-
-      solver.addAllClauses(clausesForCnf(cnf))
 
       try {
         @tailrec
@@ -306,11 +304,14 @@ trait Sat4JSolving extends Logic {
         } else {
           acc
         }
+
+        solver.addAllClauses(clausesForCnf(cnf))
+
         allModels()
       } catch {
         case e: ContradictionException =>
-          // constant propagation should prevent this from happening
-          sys.error("Formula trivially UNSAT, should not happen, please report error.")
+          // TODO not sure if it's ok for this to happen since we have constant propagation
+          Nil
         case e: TimeoutException       =>
           throw SATSolverBudget.timeout
       }
