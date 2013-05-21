@@ -224,8 +224,9 @@ trait Sat4JSolving extends Logic {
             case Some(clauses) =>
               clauses.foreach(cnf.addClause)
             case None          =>
+              val simplified = FormulaForCNF.simplify(f)
               // add intermediate variable since we want the formula to be SAT!
-              cnf.lcnf(convertWithCache(f))
+              cnf.lcnf(convertWithCache(simplified))
           }
       }
 
