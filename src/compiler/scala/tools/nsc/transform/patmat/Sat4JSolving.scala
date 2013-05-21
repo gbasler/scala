@@ -17,8 +17,15 @@ import org.sat4j.specs.{IVecInt, IVec, ISolver, TimeoutException, ContradictionE
  *
  * The Tseitin transformation trades an exponential blow-up
  * in formula size for additional variables (linear).
+ * (Using the Plaisted transformation would reduce formula size but
+ * all models will be found twice, if one polarity has been removed,
+ * so no improvement).
+ * Further improvements might be achieved by using a transformation
+ * that decides (via a cost function) when to prefer expanding over
+ * introducing additional variables.
  *
- * Comments to Adrian:
+ *
+ * Comments to Adriaan:
  * - Code is not very functional, why not using lists and have immutable objects instead of buffers and state?
  *
  * Improvements vs copied code (I removed it, it was plain ugly):
