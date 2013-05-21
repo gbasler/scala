@@ -1,3 +1,8 @@
+/* NSC -- new Scala compiler
+ *
+ * @author Gerard Basler
+ */
+
 package scala.tools.nsc.transform.patmat
 
 class Cnf {
