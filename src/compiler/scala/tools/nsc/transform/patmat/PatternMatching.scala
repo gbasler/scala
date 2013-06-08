@@ -85,7 +85,7 @@ trait PatternMatching extends Transform with TypingTransformers
   class OptimizingMatchTranslator(val typer: analyzer.Typer) extends MatchTranslator
                                                              with MatchOptimizer
                                                              with MatchAnalyzer
-                                                             with Solver
+                                                             with SatSolver
 }
 
 trait Debugging {
@@ -246,9 +246,10 @@ trait Interface extends ast.TreeDSL {
   }
 }
 
+// TODO: how do you see this?
 object PatternMatchingStats {
   val patmatNanos         = Statistics.newTimer     ("time spent in patmat", "patmat")
-  val patmatAnaDPLL       = Statistics.newSubTimer  ("  of which DPLL", patmatNanos)
+  val patmatAnaSAT        = Statistics.newSubTimer  ("  of which SAT solving", patmatNanos)
   val patmatCNF           = Statistics.newSubTimer  ("  of which in CNF conversion", patmatNanos)
   val patmatCNFSizes      = Statistics.newQuantMap[Int, Statistics.Counter]("  CNF size counts", "patmat")(Statistics.newCounter(""))
   val patmatAnaVarEq      = Statistics.newSubTimer  ("  of which variable equality", patmatNanos)
