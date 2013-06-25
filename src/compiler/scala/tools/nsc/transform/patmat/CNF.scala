@@ -12,17 +12,17 @@ package scala.tools.nsc.transform.patmat
  */
 class CNF {
 
-  import scala.collection.mutable.ArrayBuffer
+  import scala.collection.mutable.ListBuffer
 
   // a clause is a disjunction of distinct literals
   type Clause = Set[Lit]
-  type ClauseBuilder = ArrayBuffer[Clause]
+  type ClauseBuilder = ListBuffer[Clause]
 
   var noLiterals = 0
 
-  val buff = ArrayBuffer[Clause]()
+  val buff = ListBuffer[Clause]()
 
-  def clauses: Array[Clause] = buff.toArray
+  def clauses = buff.toList
 
   def newLiteral(): Lit = {
     noLiterals += 1

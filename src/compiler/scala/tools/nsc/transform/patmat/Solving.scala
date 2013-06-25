@@ -6,18 +6,12 @@
 
 package scala.tools.nsc.transform.patmat
 
+import regolic.sat.Solver
+import regolic.sat.Solver.{Results, Clause}
+import regolic.Settings
 import scala.reflect.internal.util.Statistics
 import scala.language.postfixOps
-import org.sat4j.tools.ModelIterator
-import org.sat4j.minisat.SolverFactory
 import scala.annotation.tailrec
-import org.sat4j.specs.ContradictionException
-import org.sat4j.specs.TimeoutException
-import org.sat4j.specs.IVec
-import org.sat4j.specs.IVecInt
-import org.sat4j.core.VecInt
-import org.sat4j.core.Vec
-import org.sat4j.specs.ISolver
 import scala.collection.mutable
 
 trait Solving extends Logic {
@@ -34,6 +28,7 @@ trait Solving extends Logic {
     }
 
   import PatternMatchingStats._
+
   trait TseitinCNF extends PropositionalLogic {
 
     def eqFreePropToSolvable(p: Prop): Solvable = {
@@ -52,13 +47,13 @@ trait Solving extends Logic {
             or(fv.map(convertWithCache))
           case Not(a)    =>
             not(convertWithCache(a))
-          case Sym(_,_) =>
+          case Sym(_, _) =>
             cnf.newLiteral()
           case True      =>
             cnf.constTrue
           case False     =>
             cnf.constFalse
-          case Eq(_,_) =>
+          case Eq(_, _)  =>
             sys.error("Forgot to call propToSolvable()?")
         }
       }
@@ -130,7 +125,7 @@ trait Solving extends Logic {
         def unapply(p: Prop): Option[CNF#Clause] = p match {
           case Or(fv) =>
             traverse(fv.toList)(ToLiteral.unapply).map(_.toSet)
-          case p =>
+          case p      =>
             ToLiteral.unapply(p).map(Set(_))
         }
       }
@@ -142,7 +137,7 @@ trait Solving extends Logic {
         def unapply(f: Prop): Option[Seq[CNF#Clause]] = f match {
           case And(fv) =>
             traverse(fv.toList)(ToDisjunction.unapply).map(_.toSeq)
-          case p =>
+          case p       =>
             ToDisjunction.unapply(p).map(Seq(_))
         }
       }
@@ -152,7 +147,7 @@ trait Solving extends Logic {
         case ToCnf(clauses) =>
           // already in CNF, just add clauses
           clauses.foreach(cnf.addClauseRaw)
-        case p                       =>
+        case p              =>
           // add intermediate variable since we want the formula to be SAT!
           cnf.addClauseProcessed(convertWithCache(p))
       }
@@ -176,96 +171,70 @@ trait Solving extends Logic {
     val EmptyModel = Map.empty[Sym, Boolean]
     val NoModel: Model = null
 
-    def findModelFor(solvable: Solvable, timeout: Long): Model = {
+    def findModelFor(solvable: Solvable, timeout: Int): Model = {
       import solvable._
       debug.patmat(s"searching for one model for:\n${cnf.dimacs}")
 
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaSAT) else null
 
-      val solver = SolverFactory.newDefault()
-      solver.setTimeoutMs(timeout)
-
-      val satisfiableWithModel: Model = try {
-        solver.addAllClauses(clausesForCnf(cnf))
-
-        if (solver.isSatisfiable()) {
-          extractModel(solver, litForSym)
-        } else {
+      Settings.timeout = Some(timeout)
+      val result = Solver.solve(clausesForCnf(cnf), cnf.noLiterals + 1)
+      val satisfiableWithModel = result match {
+        case Results.Satisfiable(model) =>
+          extractModel(model, litForSym)
+        case _                          =>
           NoModel
-        }
-      } catch {
-        case _: ContradictionException =>
-          // TODO not sure if it's ok for this to happen since we have constant propagation
-          NoModel
-        case _: TimeoutException       =>
-          throw AnalysisBudget.timeout
       }
-
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaSAT, start)
 
       satisfiableWithModel
     }
 
     // returns all solutions, if any
-    def findAllModelsFor(solvable: Solvable, timeout: Long): List[Model] = {
+    def findAllModelsFor(solvable: Solvable, timeout: Int): List[Model] = {
       import solvable._
       debug.patmat(s"searching for all models for:\n${cnf.dimacs}")
 
-      val solver: ModelIterator = new ModelIterator(SolverFactory.newDefault())
-      solver.setTimeoutMs(timeout)
-
+      Settings.timeout = Some(timeout)
       import scala.reflect.internal.util.Statistics
       import scala.tools.nsc.transform.patmat.PatternMatchingStats._
 
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaSAT) else null
-      val models = try {
-        @tailrec
-        def allModels(acc: List[Model] = Nil): List[Model] = if (solver.isSatisfiable()) {
-          val valuation = extractModel(solver, litForSym)
-          allModels(valuation :: acc)
-        } else {
-          acc
+
+      @tailrec
+      def allModels(clauses: List[Clause], acc: List[Model] = Nil): List[Model] = {
+        val result = Solver.solve(clauses, cnf.noLiterals + 1)
+        result match {
+          case Results.Satisfiable(model) =>
+            val valuation = extractModel(model, litForSym)
+            val blockingClause = for {
+              (sym, value) <- valuation
+            } yield {
+              if (value) {
+                litForSym(sym).dimacs
+              } else {
+                litForSym(sym).neg.dimacs
+              }
+            }
+            allModels(new Clause(blockingClause.toArray) :: clauses, valuation :: acc)
+          case _                          =>
+            acc
         }
-
-        solver.addAllClauses(clausesForCnf(cnf))
-
-        allModels()
-      } catch {
-        case _: ContradictionException =>
-          // TODO not sure if it's ok for this to happen since we have constant propagation
-          Nil
-        case _: TimeoutException       =>
-          throw AnalysisBudget.timeout
       }
-
+      val models = allModels(clausesForCnf(cnf))
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaSAT, start)
       models
     }
 
-    private def clausesForCnf(cnf: CNF): IVec[IVecInt] = {
-      val clauses: Array[IVecInt] = cnf.clauses.map(clause => new VecInt(clause.map(_.dimacs).toArray))
-      new Vec(clauses)
+    private def clausesForCnf(cnf: CNF) = {
+      cnf.clauses.map(clause => new Clause(clause.toList))
     }
 
-    private def extractModel(solver: ISolver, litForSym: Map[Sym, Lit]) = {
-      val model = solver.model()
-
-      val model0 = model.toSet
-      require(model.length == model0.size, "literal lost")
+    private def extractModel(model: Array[Boolean], litForSym: Map[Sym, Lit]) = {
 
       object PolarityForLiteral {
         def unapply(lit: Lit): Option[Boolean] = {
-          if (model0.contains(lit.v)) {
-            Some(true)
-          } else if (model0.contains(-lit.v)) {
-            Some(false)
-          } else {
-            // literal has no influence on formula
-            // sys.error(s"Literal not found ${lit} (should assume nondet)")
-            // (if uncommented this error causes the regression tests to fail)
-            // TODO: not sure if just omitting is causing other problems
-            None
-          }
+          Some(!model(lit.v))
         }
       }
 

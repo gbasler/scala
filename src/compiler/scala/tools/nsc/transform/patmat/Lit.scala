@@ -23,4 +23,6 @@ case class Lit(v: Int, sign: Boolean) {
   def pos: Lit = this
 
   def dimacs = if (sign) -v else v
+
+  def polInt: Int = if(!sign) 1 else 0
 }

@@ -254,7 +254,7 @@ trait Logic extends Debugging  {
     object AnalysisBudget {
       import scala.tools.cmd.FromString.IntFromString
       val TimeoutProperty = "scalac.patmat.analysisTimeOut"
-      val max = sys.props.get(TimeoutProperty).collect(IntFromString.orElse{case "off" => Integer.MAX_VALUE}).getOrElse(10 * 1000)
+      val max = sys.props.get(TimeoutProperty).collect(IntFromString.orElse{case "off" => Integer.MAX_VALUE}).getOrElse(10)
 
       abstract class Exception(val advice: String) extends RuntimeException("SAT solver time budget exceeded")
 
@@ -376,9 +376,9 @@ trait Logic extends Debugging  {
     val EmptyModel: Model
     val NoModel: Model
 
-    def findModelFor(solvable: Solvable, timeout: Long): Model
+    def findModelFor(solvable: Solvable, timeout: Int): Model
 
-    def findAllModelsFor(solvable: Solvable, timeout: Long): List[Model]
+    def findAllModelsFor(solvable: Solvable, timeout: Int): List[Model]
   }
 }
 
