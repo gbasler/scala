@@ -39,6 +39,8 @@ trait Solving extends Logic {
 
     type Lit
     def Lit(sym: Sym, pos: Boolean = true): Lit
+    def Lit(pos: Boolean): Lit
+    def negateLit(l: Lit): Lit
 
     def andFormula(a: Formula, b: Formula): Formula = a ++ b
     def simplifyFormula(a: Formula): Formula = a.distinct
@@ -48,69 +50,56 @@ trait Solving extends Logic {
     // throws an AnalysisBudget.Exception when the prop results in a CNF that's too big
     // TODO: be smarter/more efficient about this (http://lara.epfl.ch/w/sav09:tseitin_s_encoding)
     def eqFreePropToSolvable(p: Prop): Formula = {
-      def negationNormalFormNot(p: Prop, budget: Int): Prop =
-        if (budget <= 0) throw AnalysisBudget.exceeded
-        else p match {
-          case And(ps) => Or (ps map (negationNormalFormNot(_, budget - 1)))
-          case Or(ps)  => And(ps map (negationNormalFormNot(_, budget - 1)))
-          case Not(p)  => negationNormalForm(p, budget - 1)
-          case True    => False
-          case False   => True
-          case s: Sym  => Not(s)
-        }
 
-      def negationNormalForm(p: Prop, budget: Int = AnalysisBudget.max): Prop =
-        if (budget <= 0) throw AnalysisBudget.exceeded
-        else p match {
-          case Or(ps)        => Or (ps map (negationNormalForm(_, budget - 1)))
-          case And(ps)       => And(ps map (negationNormalForm(_, budget - 1)))
-          case Not(negated)  => negationNormalFormNot(negated, budget - 1)
-          case True
-             | False
-             | (_ : Sym)     => p
-        }
-
-      val TrueF          = formula()
-      val FalseF         = formula(clause())
-      def lit(s: Sym)    = formula(clause(Lit(s)))
+      val TrueF = formula()
+      val FalseF = formula(clause())
+      def lit(s: Sym) = formula(clause(Lit(s)))
       def negLit(s: Sym) = formula(clause(Lit(s, pos = false)))
 
-      def conjunctiveNormalForm(p: Prop, budget: Int = AnalysisBudget.max): Formula = {
-        def distribute(a: Formula, b: Formula, budget: Int): Formula =
-          if (budget <= 0) throw AnalysisBudget.exceeded
-          else
-            (a, b) match {
-              // true \/ _ = true
-              // _ \/ true = true
-              case (trueA, trueB) if trueA.size == 0 || trueB.size == 0 => TrueF
-              // lit \/ lit
-              case (a, b) if a.size == 1 && b.size == 1 => formula(merge(a(0), b(0)))
-              // (c1 /\ ... /\ cn) \/ d = ((c1 \/ d) /\ ... /\ (cn \/ d))
-              // d \/ (c1 /\ ... /\ cn) = ((d \/ c1) /\ ... /\ (d \/ cn))
-              case (cs, ds) =>
-                val (big, small) = if (cs.size > ds.size) (cs, ds) else (ds, cs)
-                big flatMap (c => distribute(formula(c), small, budget - (big.size*small.size)))
-            }
+      def conjunctiveNormalForm(p: Prop): Formula = {
 
-        if (budget <= 0) throw AnalysisBudget.exceeded
+        val formula = formulaBuilder
 
-        p match {
-          case True        => TrueF
-          case False       => FalseF
-          case s: Sym      => lit(s)
-          case Not(s: Sym) => negLit(s)
-          case And(ps)   =>
-            val formula = formulaBuilder
-            ps foreach { p =>
-              val cnf = conjunctiveNormalForm(p, budget - 1)
-              addFormula(formula, cnf)
-            }
-            toFormula(formula)
-          case Or(ps)    =>
-            ps map (conjunctiveNormalForm(_)) reduceLeft { (a, b) =>
-              distribute(a, b, budget - (a.size + b.size))
-            }
+        def convert(p: Prop): Lit = {
+          p match {
+            case And(fv) =>
+              and(fv.map(convert))
+            case Or(fv)  =>
+              or(fv.map(convert))
+            case Not(a)  =>
+              negateLit(convert(a))
+            case s: Sym  =>
+              Lit(s)
+            case True    =>
+              debug.patmat("Forgot to call simplify?")
+              throw new MatchError(p)
+            case False =>
+              debug.patmat("Forgot to call simplify?")
+              throw new MatchError(p)
+            case _: Eq   =>
+              debug.patmat("Forgot to call propToSolvable()?")
+              throw new MatchError(p)
+          }
         }
+
+        def and(ops: mutable.LinkedHashSet[Lit]): Lit = {
+          // op1*op2*...*opx <==> (op1 + o')(op2 + o')... (opx + o')(op1' + op2' +... + opx' + o)
+          val o = Lit(true) // auxiliary Tseitin variable
+          formula += ops + negateLit(o)
+          ops.foreach(op => formula += clause(negateLit(op), o))
+          o
+        }
+
+        def or(ops: mutable.LinkedHashSet[Lit]): Lit = {
+          // op1+op2+...+opx <==> (op1' + o)(op2' + o)... (opx' + o)(op1 + op2 +... + opx + o')
+          val o = Lit(true) // auxiliary Tseitin variable
+          formula += ops.map(negateLit) + o
+          ops.foreach(op => formula += clause(op, negateLit(o)))
+          o
+        }
+
+        formula += clause(convert(p))
+        formula
       }
 
       object IsDisjunction {
@@ -135,7 +124,7 @@ trait Solving extends Logic {
 
       /**
        * Checks if propositional formula is already in CNF
-        */
+       */
       object IsCnf {
         def unapply(f: Prop): Option[ArrayBuffer[Clause]] = f match {
           case And(fv) =>
@@ -162,7 +151,7 @@ trait Solving extends Logic {
           clauses
         case p              =>
           // expand formula into CNF
-          conjunctiveNormalForm(negationNormalForm(p))
+          conjunctiveNormalForm(p)
       }
 
       if (Statistics.canEnable) Statistics.stopTimer(patmatCNF, start)
@@ -178,17 +167,18 @@ trait Solving extends Logic {
   // simple solver using DPLL
   trait Solver extends CNF {
     // a literal is a (possibly negated) variable
-    def Lit(sym: Sym, pos: Boolean = true) = new Lit(sym, pos)
-    class Lit(val sym: Sym, val pos: Boolean) {
-      override def toString = if (!pos) "-"+ sym.toString else sym.toString
-      override def equals(o: Any) = o match {
-        case o: Lit => (o.sym eq sym) && (o.pos == pos)
-        case _ => false
+    def Lit(sym: Sym, pos: Boolean = true) = new Lit(Some(sym), pos)
+    def Lit(pos: Boolean) = new Lit(None, pos)
+    case class Lit(sym: Option[Sym], pos: Boolean) {
+      override def toString = {
+        val symOpt = sym.fold("TseitinVar")(_.toString)
+        if (!pos) "-"+ symOpt else symOpt
       }
-      override def hashCode = sym.hashCode + pos.hashCode
 
       def unary_- = Lit(sym, !pos)
     }
+
+    def negateLit(l: Lit): Lit = -l
 
     def cnfString(f: Formula) = alignAcrossRows(f map (_.toList) toList, "\\/", " /\\\n")
 
@@ -198,7 +188,7 @@ trait Solving extends Logic {
 
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
     def findAllModelsFor(f: Formula): List[Model] = {
-      val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet
+      val vars: Set[Sym] = f.flatMap(_ collect {case Lit(Some(sym), _) => sym}).toSet
       // debug.patmat("vars "+ vars)
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
       def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
@@ -230,7 +220,14 @@ trait Solving extends Logic {
       findAllModels(f, Nil)
     }
 
-    private def withLit(res: Model, l: Lit): Model = if (res eq NoModel) NoModel else res + (l.sym -> l.pos)
+    private def withLit(res: Model, l: Lit): Model =
+      if (res eq NoModel)
+        NoModel
+      else l.sym match {
+        case Some(sym) => res + (sym -> l.pos)
+        case None      => NoModel
+      }
+
     private def dropUnit(f: Formula, unitLit: Lit): Formula = {
       val negated = -unitLit
       // drop entire clauses that are trivially true
@@ -263,21 +260,18 @@ trait Solving extends Logic {
           case _ =>
             // partition symbols according to whether they appear in positive and/or negative literals
             // SI-7020 Linked- for deterministic counter examples.
-            val pos = new mutable.LinkedHashSet[Sym]()
-            val neg = new mutable.LinkedHashSet[Sym]()
-            mforeach(f)(lit => if (lit.pos) pos += lit.sym else neg += lit.sym)
+            val pos = new mutable.LinkedHashSet[Lit]()
+            val neg = new mutable.LinkedHashSet[Lit]()
+            mforeach(f)(lit => if (lit.pos) pos += lit else neg += -lit)
 
             // appearing in both positive and negative
-            val impures: mutable.LinkedHashSet[Sym] = pos intersect neg
+            val impures: mutable.LinkedHashSet[Lit] = pos intersect neg
             // appearing only in either positive/negative positions
-            val pures: mutable.LinkedHashSet[Sym] = (pos ++ neg) -- impures
+            val pures: mutable.LinkedHashSet[Lit] = (pos ++ neg) -- impures
 
             if (pures nonEmpty) {
-              val pureSym = pures.head
-              // turn it back into a literal
-              // (since equality on literals is in terms of equality
-              //  of the underlying symbol and its positivity, simply construct a new Lit)
-              val pureLit = Lit(pureSym, pos(pureSym))
+              // turn it back into a positive literal
+              val pureLit = pures.head.copy(pos = true)
               // debug.patmat("pure: "+ pureLit +" pures: "+ pures +" impures: "+ impures)
               val simplified = f.filterNot(_.contains(pureLit))
               withLit(findModelFor(simplified), pureLit)
