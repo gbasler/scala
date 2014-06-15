@@ -113,8 +113,57 @@ trait Solving extends Logic {
         }
       }
 
+      object IsDisjunction {
+        def unapply(p: Prop): Option[Clause] = p match {
+          case Or(fv) =>
+            fv.foldLeft(Option(collection.Set[Lit]())) {
+              case (Some(clause), sym: Sym) =>
+                Some(clause + Lit(sym))
+              case (Some(clause), Not(sym: Sym)) =>
+                Some(clause + Lit(sym, false))
+              case (_, _)                   =>
+                None
+            }
+          case sym: Sym =>
+            Some(collection.Set(Lit(sym)))
+          case Not(sym: Sym) =>
+            Some(collection.Set(Lit(sym, false)))
+          case _        =>
+            None
+        }
+      }
+
+      /**
+       * Checks if propositional formula is already in CNF
+        */
+      object IsCnf {
+        def unapply(f: Prop): Option[ArrayBuffer[Clause]] = f match {
+          case And(fv) =>
+            fv.foldLeft(Option(formulaBuilder)) {
+              case (Some(cnf), IsDisjunction(clause)) =>
+                Some(cnf += clause)
+              case (_, _)                             =>
+                None
+            }
+          case True    =>
+            Some(TrueF)
+          case False   =>
+            Some(FalseF)
+          case p       =>
+            IsDisjunction.unapply(p).map(formulaBuilder += _)
+        }
+      }
+
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatCNF) else null
-      val res   = conjunctiveNormalForm(negationNormalForm(p))
+      val simplified = simplify(p)
+      val res = simplified match {
+        case IsCnf(clauses) =>
+          // already in CNF, just add clauses
+          clauses
+        case p              =>
+          // expand formula into CNF
+          conjunctiveNormalForm(negationNormalForm(p))
+      }
 
       if (Statistics.canEnable) Statistics.stopTimer(patmatCNF, start)
 

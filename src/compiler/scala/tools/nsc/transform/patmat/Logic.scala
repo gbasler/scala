@@ -145,6 +145,86 @@ trait Logic extends Debugging  {
     def /\(props: Iterable[Prop]) = if (props.isEmpty) True else And(props.toSeq: _*)
     def \/(props: Iterable[Prop]) = if (props.isEmpty) False else Or(props.toSeq: _*)
 
+    /**
+     * Simplifies propositional formula according to the following rules:
+     * - eliminate double negation (avoids unnecessary Tseitin variables)
+     * - flatten trees of same connectives (avoids unnecessary Tseitin variables)
+     * - removes constants and connectives that are in fact constant because of their operands
+     * - eliminates duplicate operands
+     *
+     * Complexity: DFS over formula tree
+     */
+    def simplify(f: Prop): Prop = {
+
+      // limit size to avoid blow up
+      def hasImpureAtom(ops: Seq[Prop]): Boolean = ops.size < 10 &&
+        ops.combinations(2).exists {
+          case Seq(a, Not(b)) if a == b => true
+          case Seq(Not(a), b) if a == b => true
+          case _                        => false
+        }
+
+      f match {
+        case And(fv)     =>
+          // recurse for nested And (pulls all Ands up)
+          val ops = fv.map(simplify) - True // ignore `True`
+
+          // build up Set in order to remove duplicates
+          val opsFlattened = ops.flatMap {
+            case And(fv) => fv
+            case f       => Set(f)
+          }.toSeq
+
+          if (hasImpureAtom(opsFlattened) || opsFlattened.contains(False)) {
+            False
+          } else {
+            opsFlattened match {
+              case Seq()  => True
+              case Seq(f) => f
+              case ops    => And(ops: _*)
+            }
+          }
+        case Or(fv)      =>
+          // recurse for nested Or (pulls all Ors up)
+          val ops = fv.map(simplify) - False // ignore `False`
+
+          val opsFlattened = ops.flatMap {
+            case Or(fv) => fv
+            case f      => Set(f)
+          }.toSeq
+
+          if (hasImpureAtom(opsFlattened) || opsFlattened.contains(True)) {
+            True
+          } else {
+            opsFlattened match {
+              case Seq()  => False
+              case Seq(f) => f
+              case ops    => Or(ops: _*)
+            }
+          }
+        case Not(Not(a)) =>
+          simplify(a)
+        case Not(p)      =>
+          pushNegationInside(simplify(p))
+        case p           =>
+          p
+      }
+    }
+
+    private def pushNegationInside(f: Prop): Prop = f match {
+      case And(fv)       =>
+        Or(fv.map(pushNegationInside))
+      case Or(fv)        =>
+        And(fv.map(pushNegationInside))
+      case True          =>
+        False
+      case False         =>
+        True
+      case Not(sym: Sym) =>
+        sym
+      case p             =>
+        Not(p)
+    }
 
     trait PropTraverser {
       def apply(x: Prop): Unit = x match {
