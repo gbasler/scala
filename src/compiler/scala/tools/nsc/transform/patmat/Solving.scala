@@ -167,11 +167,16 @@ trait Solving extends Logic {
   // simple solver using DPLL
   trait Solver extends CNF {
     // a literal is a (possibly negated) variable
-    def Lit(sym: Sym, pos: Boolean = true) = new Lit(Some(sym), pos)
-    def Lit(pos: Boolean) = new Lit(None, pos)
-    case class Lit(sym: Option[Sym], pos: Boolean) {
+    def Lit(sym: Sym, pos: Boolean = true) = new Lit(Some(sym), pos, -1)
+    var tseitinLits = -1
+    def Lit(pos: Boolean) = {
+      tseitinLits += 1
+      new Lit(None, pos, tseitinLits)
+    }
+    // TODO: kill case class
+    case class Lit(sym: Option[Sym], pos: Boolean, number: Int) {
       override def toString = {
-        val symOpt = sym.fold("TseitinVar")(_.toString)
+        val symOpt = sym.fold(s"TseitinVar$number")(_.toString)
         if (!pos) "-"+ symOpt else symOpt
       }
 
@@ -260,18 +265,26 @@ trait Solving extends Logic {
           case _ =>
             // partition symbols according to whether they appear in positive and/or negative literals
             // SI-7020 Linked- for deterministic counter examples.
-            val pos = new mutable.LinkedHashSet[Lit]()
-            val neg = new mutable.LinkedHashSet[Lit]()
-            mforeach(f)(lit => if (lit.pos) pos += lit else neg += -lit)
+            val pos = new mutable.LinkedHashSet[Sym]()
+            val neg = new mutable.LinkedHashSet[Sym]()
+            mforeach(f) {
+              lit => lit.sym match {
+                case Some(sym) => if (lit.pos) pos += sym else neg += sym
+                case None      =>
+              }
+            }
 
             // appearing in both positive and negative
-            val impures: mutable.LinkedHashSet[Lit] = pos intersect neg
+            val impures: mutable.LinkedHashSet[Sym] = pos intersect neg
             // appearing only in either positive/negative positions
-            val pures: mutable.LinkedHashSet[Lit] = (pos ++ neg) -- impures
+            val pures: mutable.LinkedHashSet[Sym] = (pos ++ neg) -- impures
 
             if (pures nonEmpty) {
-              // turn it back into a positive literal
-              val pureLit = pures.head.copy(pos = true)
+              val pureSym = pures.head
+              // turn it back into a literal
+              // (since equality on literals is in terms of equality
+              //  of the underlying symbol and its positivity, simply construct a new Lit)
+              val pureLit = Lit(pureSym, pos(pureSym))
               // debug.patmat("pure: "+ pureLit +" pures: "+ pures +" impures: "+ impures)
               val simplified = f.filterNot(_.contains(pureLit))
               withLit(findModelFor(simplified), pureLit)
