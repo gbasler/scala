@@ -180,7 +180,7 @@ trait Solving extends Logic {
         if (!pos) "-"+ symOpt else symOpt
       }
 
-      def unary_- = Lit(sym, !pos)
+      def unary_- = Lit(sym, !pos, number)
     }
 
     def negateLit(l: Lit): Lit = -l
@@ -265,26 +265,18 @@ trait Solving extends Logic {
           case _ =>
             // partition symbols according to whether they appear in positive and/or negative literals
             // SI-7020 Linked- for deterministic counter examples.
-            val pos = new mutable.LinkedHashSet[Sym]()
-            val neg = new mutable.LinkedHashSet[Sym]()
-            mforeach(f) {
-              lit => lit.sym match {
-                case Some(sym) => if (lit.pos) pos += sym else neg += sym
-                case None      =>
-              }
-            }
+            val pos = new mutable.LinkedHashSet[Lit]()
+            val neg = new mutable.LinkedHashSet[Lit]()
+            mforeach(f)(lit => if (lit.pos) pos += lit else neg += -lit)
 
             // appearing in both positive and negative
-            val impures: mutable.LinkedHashSet[Sym] = pos intersect neg
+            val impures: mutable.LinkedHashSet[Lit] = pos intersect neg
             // appearing only in either positive/negative positions
-            val pures: mutable.LinkedHashSet[Sym] = (pos ++ neg) -- impures
+            val pures: mutable.LinkedHashSet[Lit] = (pos ++ neg) -- impures
 
             if (pures nonEmpty) {
-              val pureSym = pures.head
-              // turn it back into a literal
-              // (since equality on literals is in terms of equality
-              //  of the underlying symbol and its positivity, simply construct a new Lit)
-              val pureLit = Lit(pureSym, pos(pureSym))
+              // turn it back into a positive literal
+              val pureLit = pures.head.copy(pos = true)
               // debug.patmat("pure: "+ pureLit +" pures: "+ pures +" impures: "+ impures)
               val simplified = f.filterNot(_.contains(pureLit))
               withLit(findModelFor(simplified), pureLit)
