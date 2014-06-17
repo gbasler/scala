@@ -191,8 +191,14 @@ trait Solving extends Logic {
     val EmptyModel = collection.immutable.SortedMap.empty[Sym, Boolean]
     val NoModel: Model = null
 
+    private type TseitinModel = List[Lit]
+    private val EmptyTseitinModel = List.empty[Lit]
+    private val NoTseitinModel: TseitinModel = null
+
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
-    def findAllModelsFor(f: Formula): List[Model] = {
+    def findAllModelsFor(f: Formula): List[Model] = ???
+
+    def findAllTseitinModelsFor(f: Formula): List[TseitinModel] = {
       val vars: Set[Sym] = f.flatMap(_ collect {case Lit(Some(sym), _) => sym}).toSet
       // debug.patmat("vars "+ vars)
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
