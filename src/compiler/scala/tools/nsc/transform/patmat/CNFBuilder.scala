@@ -12,6 +12,8 @@ class Lit(val v: Int) extends AnyVal {
   def variable: Int = Math.abs(v)
   def positive = v >= 0
 
+  def dimacs = v
+
   override def toString(): String = s"Lit#$v"
 }
 
@@ -111,7 +113,7 @@ class CNFBuilder {
   }.mkString("\n")
 
   def dimacs: String = {
-    val header = s"p cnf ${myLiteralCount} ${buff.length}\n"
+    val header = s"p cnf ${allVariables.max} ${buff.length}\n"
     header + {
       for {
         clause <- buff

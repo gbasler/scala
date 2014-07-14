@@ -11,13 +11,22 @@ import scala.collection.immutable.SortedSet
 import scala.reflect.internal.util.Statistics
 import scala.language.postfixOps
 import scala.collection.mutable
-import scala.reflect.internal.util.Collections._
+import scala.Some
+import org.sat4j.tools.ModelIterator
+import org.sat4j.minisat.SolverFactory
+import scala.annotation.tailrec
+import org.sat4j.specs.ContradictionException
+import org.sat4j.specs.TimeoutException
+import org.sat4j.specs.IVec
+import org.sat4j.specs.IVecInt
+import org.sat4j.core.VecInt
+import org.sat4j.core.Vec
+import org.sat4j.specs.ISolver
 
 /** Solve pattern matcher exhaustivity problem via DPLL.
  */
 trait Solving extends Logic {
 
-  import PatternMatchingStats._
   /** Tseitin transformation: used for conversion of a
    *  propositional formula into conjunctive normal form (CNF)
    *  (input format for SAT solver).
@@ -185,10 +194,8 @@ trait Solving extends Logic {
 
   }
 
-  // simple solver using DPLL
+  // simple wrapper around a SAT solver
   trait Solver extends TseitinCNF {
-
-    import scala.collection.mutable.ArrayBuffer
 
     // a clause is a disjunction of distinct literals
     def clause(l: Lit*): Clause = (
@@ -198,14 +205,13 @@ trait Solving extends Logic {
         // neg/t7020.scala changes output 1% of the time, the non-determinism is quelled with this linked set
         mutable.LinkedHashSet(l: _*)
       }
-    )
-    
+      )
+
     def cnfString(f: Array[Clause]): String = {
-      // TODO: fixme
-//      val lits: Array[List[String]] = f map (_.map(_.toString).toList)
-//      val xss: List[List[String]] = lits toList
-//      alignAcrossRows(xss, "\\/", " /\\\n")
-      ""
+      val lits: Array[List[String]] = f map (_.map(_.toString).toList)
+      val xss: List[List[String]] = lits toList
+      val a: String = alignAcrossRows(xss, "\\/", " /\\\n")
+      a
     }
 
     // adapted from http://lara.epfl.ch/w/sav10:simple_sat_solver (original by Hossein Hojjat)
@@ -217,186 +223,138 @@ trait Solving extends Logic {
     val EmptyTseitinModel = collection.immutable.SortedSet.empty[Lit]
     val NoTseitinModel: TseitinModel = null
 
-    // http://docs.oracle.com/javase/7/docs/api/java/lang/System.html#nanoTime() recommends nanoTime for measuring elapsed time
-    @inline private def reachedTime(stoppingNanos: Long): Boolean = stoppingNanos != 0 && (stoppingNanos - System.nanoTime < 0)
-    private def stoppingNanosFor(millis: Long): Long = if (millis == 0) 0 else System.nanoTime + (millis * 1000000)
+    def findModelFor(solvable: Solvable): Model = {
+      import solvable._
+      debug.patmat(s"searching for one model for:\n${cnf.dimacs}")
 
-    // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
-    def findAllModelsFor(solvable: Solvable): List[Model] = {
-//      println(s"""findAllModelsFor ${solvable.cnf.clauses.mkString(", ")}""")
+//      val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaSAT) else null
 
-    // TODO: remove?
-      val stoppingNanos: Long = 0L //stoppingNanosFor(AnalysisBudget.defaultTimeoutMillis)
+      val solver = SolverFactory.newDefault()
+//      solver.setTimeoutMs(timeout)
 
-      val syms: Set[Sym] = solvable.symForVar.values.toSet
-      val vars: Set[Int] = solvable.symForVar.keySet
-      val ord: Map[Sym, Int] = syms.toSeq.reverse.zipWithIndex.toMap
+      val satisfiableWithModel: Model = try {
+        solver.addAllClauses(clausesForCnf(cnf))
 
-//      println("syms " + syms.mkString(", "))
-//      println("ord " + ord.mkString(", "))
-//      println("vars " + vars.mkString(", "))
-
-      val CompatibleOrdering = Ordering.by[Int, Int] {
-        variable =>
-          val symOpt: Int = solvable.symForVar.get(variable).map(ord).getOrElse(-variable) // negative to be ordered after
-          symOpt
+        if (solver.isSatisfiable) {
+          extractModel(solver, symForVar)
+        } else {
+          NoModel
+        }
+      } catch {
+        case _: ContradictionException =>
+          // TODO not sure if it's ok for this to happen since we have constant propagation
+          NoModel
+        case _: TimeoutException       =>
+          throw AnalysisBudget.exceeded
       }
 
-      val allVars: Set[Int] = solvable.cnf.allVariables
-//      println("elems " + elems.mkString(", "))
-//      println("ord " + elems.flatMap(solvable.symForVar.get).map(ord).mkString(", "))
-      // variables of the problem
-      // TODO: should be sorted for stable results
-//      val allVars: SortedSet[Int] = SortedSet(elems: _*)(CompatibleOrdering)
-//      println("vars "+ allVars)
-//      println("vars "+ allVars.map(v => solvable.symForVar(v)).mkString(", "))
-      // debug.patmat("vars "+ vars)
-      // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
-      // (i.e. the blocking clause - used for ALL-SAT)
-      def negateModel(m: TseitinModel) = m.map(lit => -lit)
+//      if (Statistics.canEnable) Statistics.stopTimer(patmatAnaSAT, start)
 
-      def findAllModels(clauses: Array[Clause], models: List[TseitinModel], recursionDepthAllowed: Int = 10): List[TseitinModel] =
-        if (recursionDepthAllowed == 0) models
-        else {
-          debug.patmat("find all models for\n" + cnfString(clauses))
-          val model = findTseitinModelFor(clauses, stoppingNanos)
-          // if we found a solution, conjunct the formula with the model's negation and recurse
-          if (model ne NoTseitinModel) {
-            val unassigned0: List[Int] = (allVars -- model.map(lit => lit.variable)).toList
-            val unassigned = unassigned0.sorted(CompatibleOrdering)
-//            println("vars " + unassigned.mkString(", "))
-            // TODO: will crash for direct CNF
-            debug.patmat(s"unassigned ${unassigned map (v => solvable.symForVar(v))} in ${projectToModel(model, solvable.symForVar)}")
+      println("onemodel")
+      printModels(List(satisfiableWithModel))
 
-            def force(lit: Lit) = {
-              val model = withLit(findTseitinModelFor(dropUnit(clauses.toArray, lit), stoppingNanos), lit)
-              if (model ne NoTseitinModel) List(model)
-              else Nil
-            }
-            val forced = unassigned flatMap { v =>
-              force(Lit(v)) ++ force(Lit(-v))
-            }
-            debug.patmat("forced " + forced)
+      satisfiableWithModel
+    }
 
-            val negated = negateModel(model)
-            findAllModels(clauses :+ negated, model :: (forced ++ models), recursionDepthAllowed - 1)
-          }
-          else models
+    // returns all solutions, if any
+    def findAllModelsFor(solvable: Solvable): List[Model] = {
+      import solvable._
+      debug.patmat(s"searching for all models for:\n${cnf.dimacs}")
+
+      val solver: ModelIterator = new ModelIterator(SolverFactory.newDefault())
+//      solver.setTimeoutMs(timeout)
+
+      import scala.reflect.internal.util.Statistics
+
+//      val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaSAT) else null
+      val models = try {
+        @tailrec
+        def allModels(acc: List[Model] = Nil): List[Model] = if (solver.isSatisfiable()) {
+          val valuation = extractModel(solver, symForVar)
+          allModels(valuation :: acc)
+        } else {
+          acc
         }
 
-      val tseitinModels = findAllModels(solvable.cnf.clauses, Nil)
-      val models: List[Model] = tseitinModels.map(projectToModel(_, solvable.symForVar))
+        solver.addAllClauses(clausesForCnf(cnf))
 
-      val grouped: Seq[(SortedSet[Sym], List[Model])] = models.groupBy {
-        model => model.keySet
-      }.toSeq
-
-      val sorted: Seq[(SortedSet[Sym], List[Model])] = grouped.sortBy {
-        case (syms, models) => syms.map(_.id).toIterable
+        allModels()
+      } catch {
+        case _: ContradictionException =>
+          // TODO not sure if it's ok for this to happen since we have constant propagation
+          Nil
+        case _: TimeoutException       =>
+          throw AnalysisBudget.exceeded
       }
 
-      for {
-        (keys, models) <- sorted
-        model <- models
-      } {
-        println(model)
-      }
+//      if (Statistics.canEnable) Statistics.stopTimer(patmatAnaSAT, start)
+
+      println("problem")
+      println(cnfString(solvable.cnf.clauses))
+      println("allmodels")
+      printModels(models)
 
       models
     }
 
-    private def formatModel(model: Model): String = {
-      (model.toSeq.map {
-        case (sym: Sym, b: Boolean) => sym + "=" + b
-      }).mkString(", ")
-    }
-
-    private def withLit(res: TseitinModel, l: Lit): TseitinModel = {
-      if (res eq NoTseitinModel) NoTseitinModel else res + l
-    }
-
-    /** Drop trivially true clauses, simplify others by dropping negation of `unitLit`.
-     *
-     *  Disjunctions that contain the literal we're making true in the returned model are trivially true.
-     *  Clauses can be simplified by dropping the negation of the literal we're making true
-     *  (since False \/ X == X)
-     */
-    private def dropUnit(clauses: Array[Clause], unitLit: Lit): Array[Clause] = {
-      val negated = -unitLit
-      val simplified = new ArrayBuffer[Clause](clauses.size)
-      clauses foreach {
-        case trivial if trivial contains unitLit => // drop
-        case clause                              => simplified += clause - negated
+    def printModels(models: List[Model]) {
+      val groupedByKey = models.groupBy {
+        model => model.keySet
+      }.mapValues {
+        models =>
+          models.sortWith {
+            case (a, b) =>
+            val keys = a.keys
+            val decider = keys.dropWhile(key => a(key) == b(key))
+            decider.headOption.map(key => a(key) < b(key)).getOrElse(false)
+          }
       }
-      simplified.toArray
-    }
 
-    def findModelFor(solvable: Solvable): Model = {
-//      println("findModelFor")
-      val stoppingNanos: Long = 0L //stoppingNanosFor(AnalysisBudget.defaultTimeoutMillis)
-      projectToModel(findTseitinModelFor(solvable.cnf.clauses, stoppingNanos), solvable.symForVar)
-    }
-
-    def findTseitinModelFor(clauses: Array[Clause], stoppingNanos: Long): TseitinModel = {
-      @inline def orElse(a: TseitinModel, b: => TseitinModel) = if (a ne NoTseitinModel) a else b
-
-//      if (reachedTime(stoppingNanos)) throw AnalysisBudget.timeout
-
-      debug.patmat(s"DPLL\n${cnfString(clauses)}")
-
-      val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaDPLL) else null
-
-      val satisfiableWithModel: TseitinModel =
-        if (clauses isEmpty) EmptyTseitinModel
-        else if (clauses exists (_.isEmpty)) NoTseitinModel
-        else clauses.find(_.size == 1) match {
-          case Some(unitClause) =>
-            val unitLit = unitClause.head
-            withLit(findTseitinModelFor(dropUnit(clauses, unitLit), stoppingNanos), unitLit)
-          case _ =>
-            // partition symbols according to whether they appear in positive and/or negative literals
-            // SI-7020 Linked- for deterministic counter examples.
-            val pos = new mutable.LinkedHashSet[Int]()
-            val neg = new mutable.LinkedHashSet[Int]()
-
-            mforeach(clauses)(lit => if (lit.positive) pos += lit.variable else neg += lit.variable)
-
-//            println(s"""pos ${pos.mkString(", ")}""")
-//            println(s"""neg ${neg.mkString(", ")}""")
-
-            // appearing in both positive and negative
-            val impures: mutable.LinkedHashSet[Int] = pos intersect neg
-
-            // appearing only in either positive/negative positions
-            val pures: mutable.LinkedHashSet[Int] = (pos ++ neg) -- impures
-
-            if (pures nonEmpty) {
-              val pureVar: Int = pures.head
-              // turn it back into a literal
-              // (since equality on literals is in terms of equality
-              //  of the underlying symbol and its positivity, simply construct a new Lit)
-              val pureLit = Lit(if (neg(pureVar)) -pureVar else pureVar)
-              // debug.patmat("pure: "+ pureLit +" pures: "+ pures +" impures: "+ impures)
-              val simplified = clauses.filterNot(_.contains(pureLit))
-              withLit(findTseitinModelFor(simplified, stoppingNanos), pureLit)
-            } else {
-              val split = clauses.head.head
-              // debug.patmat("split: "+ split)
-              orElse(findTseitinModelFor(clauses :+ clause(split), stoppingNanos), findTseitinModelFor(clauses :+ clause(-split), stoppingNanos))
-            }
-        }
-
-      if (Statistics.canEnable) Statistics.stopTimer(patmatAnaDPLL, start)
-      satisfiableWithModel
-    }
-
-    private def projectToModel(model: TseitinModel, symForVar: Map[Int, Sym]): Model =
-      if (model == NoTseitinModel) NoModel
-      else {
-        val a: List[(Sym, Boolean)] = model.toList collect {
-          case lit if symForVar isDefinedAt lit.variable => (symForVar(lit.variable), lit.positive)
-        }
-        collection.immutable.SortedMap(a: _*)
+      val sortedByKeys: Seq[(SortedSet[Sym], List[Model])] = groupedByKey.toSeq.sortBy {
+        case (syms, models) => syms.map(_.id).toIterable
       }
+
+      for {
+        (keys, models) <- sortedByKeys
+        model <- models
+      } {
+        println(model)
+      }
+    }
+
+    private def clausesForCnf(cnf: CNFBuilder): IVec[IVecInt] = {
+      val clauses: Array[IVecInt] = cnf.clauses.map(clause => new VecInt(clause.map(_.dimacs).toArray))
+      val cl = new Vec(clauses)
+      println(cl)
+      cl
+    }
+
+    private def extractModel(solver: ISolver, symForVar: Map[Int, Sym]): Model = {
+      val model = solver.model()
+
+      val model0 = model.toSet
+      require(model.length == model0.size, "literal lost")
+
+      object PolarityForVar {
+        def unapply(v: Int): Option[Boolean] = {
+          if (model0.contains(v)) {
+            Some(true)
+          } else if (model0.contains(-v)) {
+            Some(false)
+          } else {
+            // literal has no influence on formula
+            sys.error(s"Literal not found ${v} (should assume nondet)")
+            // (if uncommented this error causes the regression tests to fail)
+            // TODO: not sure if just omitting is causing other problems
+            None
+          }
+        }
+      }
+
+      // don't extract intermediate literals
+      collection.immutable.SortedMap(symForVar.toSeq.collect {
+        case (PolarityForVar(polarity), sym) => sym -> polarity
+      }: _*)
+    }
   }
 }
