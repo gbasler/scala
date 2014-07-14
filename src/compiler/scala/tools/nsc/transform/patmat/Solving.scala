@@ -6,27 +6,190 @@
 
 package scala.tools.nsc.transform.patmat
 
-import scala.collection.mutable
+import scala.collection
+import scala.collection.immutable.SortedSet
 import scala.reflect.internal.util.Statistics
 import scala.language.postfixOps
+import scala.collection.mutable
 import scala.reflect.internal.util.Collections._
 
-// naive CNF translation and simple DPLL solver
+/** Solve pattern matcher exhaustivity problem via DPLL.
+ */
 trait Solving extends Logic {
+
   import PatternMatchingStats._
-  trait CNF extends PropositionalLogic {
+  /** Tseitin transformation: used for conversion of a
+   *  propositional formula into conjunctive normal form (CNF)
+   *  (input format for SAT solver).
+   *  A simple conversion into CNF via Shannon expansion would
+   *  also be possible but it's worst-case complexity is exponential
+   *  (in the number of variables) and thus even simple problems
+   *  could become untractable.
+   *  The Tseitin transformation results in an _equisatisfiable_
+   *  CNF-formula (it generates auxiliary variables)
+   *  but runs with linear complexity.
+   */
+  trait TseitinCNF extends PropositionalLogic {
+    type Clause = CNFBuilder#Clause
+
+    def eqFreePropToSolvable(p: Prop): Solvable = {
+      type Cache = Map[Prop, Lit]
+
+      val cache = mutable.Map[Prop, Lit]()
+
+      val cnf = new CNFBuilder
+
+      def convertWithoutCache(p: Prop): Lit = {
+        p match {
+          case And(fv) =>
+            and(fv.map(convertWithCache))
+          case Or(fv) =>
+            or(fv.map(convertWithCache))
+          case Not(a) =>
+            not(convertWithCache(a))
+          case _: Sym =>
+            val l = cnf.newLiteral()
+            println(s"created $l for $p")
+            l
+          case True =>
+            cnf.constTrue
+          case False =>
+            cnf.constFalse
+          case _: Eq =>
+            debug.patmat("Forgot to call propToSolvable()?")
+            throw new MatchError(p)
+        }
+      }
+
+      def convertWithCache(p: Prop): Lit = {
+        cache.getOrElse(p, {
+          val l = convertWithoutCache(p)
+          require(!cache.isDefinedAt(p), "loop in formula?")
+          cache += (p -> l)
+          l
+        })
+      }
+
+      def and(bv: mutable.LinkedHashSet[Lit]): Lit = {
+        import cnf._
+        if (bv.isEmpty) {
+          constTrue
+        } else if (bv.size == 1) {
+          bv.head
+        } else if (bv.contains(constFalse)) {
+          constFalse
+        } else {
+          // op1*op2*...*opx <==> (op1 + o')(op2 + o')... (opx + o')(op1' + op2' +... + opx' + o)
+          val new_bv = bv - constTrue // ignore `True`
+          val o = newLiteral() // auxiliary Tseitin variable
+          new_bv.map(op => addClauseProcessed(op, -o))
+          addClauseProcessed((new_bv.map(op => -op) + o).toSeq: _*)
+          o
+        }
+      }
+
+      def or(bv: mutable.LinkedHashSet[Lit]): Lit = {
+        import cnf._
+        if (bv.isEmpty) {
+          constFalse
+        } else if (bv.size == 1) {
+          bv.head
+        } else if (bv.contains(constTrue)) {
+          constTrue
+        } else {
+          // op1+op2+...+opx <==> (op1' + o)(op2' + o)... (opx' + o)(op1 + op2 +... + opx + o')
+          val new_bv = bv - constFalse // ignore `False`
+          val o = newLiteral() // auxiliary Tseitin variable
+          new_bv.map(op => addClauseProcessed(-op, o))
+          addClauseProcessed((new_bv + (-o)).toSeq: _*)
+          o
+        }
+      }
+
+      // no need for auxiliary variable
+      def not(a: Lit): Lit = -a
+
+      def toLiteral(f: Prop): Option[Lit] = f match {
+        case Not(a) =>
+          toLiteral(a).map(lit => -lit)
+        case sym: Sym =>
+//          Some(convertWithCache(f)) // go via cache in order to get single literal for variable
+
+          val l: Lit = Lit(sym.id)
+          cache += (sym -> l)
+          Some(l) // keep variable number to get compatible ordering
+        case True   =>
+          Some(cnf.constTrue)
+        case False  =>
+          Some(cnf.constFalse)
+        case _      =>
+          None
+      }
+
+      object ToDisjunction {
+        def unapply(f: Prop): Option[Clause] = f match {
+          case Or(fv) =>
+            val a: Option[Clause] = fv.foldLeft(Option(Set[Lit]())) {
+              case (Some(clause), p) =>
+                toLiteral(p).map(clause + _)
+              case (_, _)            =>
+                None
+            }
+            a
+          case p      =>
+            toLiteral(p).map(Set(_))
+        }
+      }
+
+      /**
+       * Checks if propositional formula is already in CNF
+       */
+      object ToCnf {
+        def unapply(f: Prop): Option[mutable.ArrayBuffer[Clause]] = f match {
+          case And(fv) =>
+            fv.foldLeft(Option(mutable.ArrayBuffer[Clause]())) {
+              case (Some(cnf), ToDisjunction(clause)) =>
+                Some(cnf += clause)
+              case (_, _)                             =>
+                None
+            }
+//          case True    =>
+//            Some(cnf.constTrue)
+//          case False   =>
+//            Some(cnf.constFalse)
+          case p       =>
+            ToDisjunction.unapply(p).map(mutable.ArrayBuffer[Clause](_))
+        }
+      }
+
+      val simplified: Prop = simplify(p)
+      simplified match {
+        case ToCnf(clauses) =>
+//          println("already in CNF")
+          // already in CNF, just add clauses
+          clauses.foreach(clause => cnf.addClauseRaw(clause))
+        case p              =>
+//          println("convert to CNF")
+          // add intermediate variable since we want the formula to be SAT!
+          cnf.addClauseProcessed(convertWithCache(p))
+      }
+
+      // all variables are guaranteed to be in cache
+      // (doesn't mean they will appear in the resulting formula)
+      val symForVar: Map[Int, Sym] = cache.collect {
+        case (sym: Sym, lit) => lit.variable -> sym
+      }(collection.breakOut) // breakOut in order to obtain immutable Map
+
+      Solvable(cnf, symForVar)
+    }
+
+  }
+
+  // simple solver using DPLL
+  trait Solver extends TseitinCNF {
+
     import scala.collection.mutable.ArrayBuffer
-    type FormulaBuilder = ArrayBuffer[Clause]
-    def formulaBuilder  = ArrayBuffer[Clause]()
-    def formulaBuilderSized(init: Int)  = new ArrayBuffer[Clause](init)
-    def addFormula(buff: FormulaBuilder, f: Formula): Unit = buff ++= f
-    def toFormula(buff: FormulaBuilder): Formula = buff
 
-    // CNF: a formula is a conjunction of clauses
-    type Formula = FormulaBuilder
-    def formula(c: Clause*): Formula = ArrayBuffer(c: _*)
-
-    type Clause  = collection.Set[Lit]
     // a clause is a disjunction of distinct literals
     def clause(l: Lit*): Clause = (
       if (l.lengthCompare(1) <= 0) {
@@ -36,260 +199,204 @@ trait Solving extends Logic {
         mutable.LinkedHashSet(l: _*)
       }
     )
-
-    type Lit
-    def Lit(sym: Sym, pos: Boolean = true): Lit
-
-    def andFormula(a: Formula, b: Formula): Formula = a ++ b
-    def simplifyFormula(a: Formula): Formula = a.distinct
-
-    private def merge(a: Clause, b: Clause) = a ++ b
-
-    // throws an AnalysisBudget.Exception when the prop results in a CNF that's too big
-    // TODO: be smarter/more efficient about this (http://lara.epfl.ch/w/sav09:tseitin_s_encoding)
-    def eqFreePropToSolvable(p: Prop): Formula = {
-      def negationNormalFormNot(p: Prop, budget: Int): Prop =
-        if (budget <= 0) throw AnalysisBudget.exceeded
-        else p match {
-          case And(ps) => Or (ps map (negationNormalFormNot(_, budget - 1)))
-          case Or(ps)  => And(ps map (negationNormalFormNot(_, budget - 1)))
-          case Not(p)  => negationNormalForm(p, budget - 1)
-          case True    => False
-          case False   => True
-          case s: Sym  => Not(s)
-        }
-
-      def negationNormalForm(p: Prop, budget: Int = AnalysisBudget.max): Prop =
-        if (budget <= 0) throw AnalysisBudget.exceeded
-        else p match {
-          case Or(ps)        => Or (ps map (negationNormalForm(_, budget - 1)))
-          case And(ps)       => And(ps map (negationNormalForm(_, budget - 1)))
-          case Not(negated)  => negationNormalFormNot(negated, budget - 1)
-          case True
-             | False
-             | (_ : Sym)     => p
-        }
-
-      val TrueF          = formula()
-      val FalseF         = formula(clause())
-      def lit(s: Sym)    = formula(clause(Lit(s)))
-      def negLit(s: Sym) = formula(clause(Lit(s, pos = false)))
-
-      def conjunctiveNormalForm(p: Prop, budget: Int = AnalysisBudget.max): Formula = {
-        def distribute(a: Formula, b: Formula, budget: Int): Formula =
-          if (budget <= 0) throw AnalysisBudget.exceeded
-          else
-            (a, b) match {
-              // true \/ _ = true
-              // _ \/ true = true
-              case (trueA, trueB) if trueA.size == 0 || trueB.size == 0 => TrueF
-              // lit \/ lit
-              case (a, b) if a.size == 1 && b.size == 1 => formula(merge(a(0), b(0)))
-              // (c1 /\ ... /\ cn) \/ d = ((c1 \/ d) /\ ... /\ (cn \/ d))
-              // d \/ (c1 /\ ... /\ cn) = ((d \/ c1) /\ ... /\ (d \/ cn))
-              case (cs, ds) =>
-                val (big, small) = if (cs.size > ds.size) (cs, ds) else (ds, cs)
-                big flatMap (c => distribute(formula(c), small, budget - (big.size*small.size)))
-            }
-
-        if (budget <= 0) throw AnalysisBudget.exceeded
-
-        p match {
-          case True        => TrueF
-          case False       => FalseF
-          case s: Sym      => lit(s)
-          case Not(s: Sym) => negLit(s)
-          case And(ps)   =>
-            val formula = formulaBuilder
-            ps foreach { p =>
-              val cnf = conjunctiveNormalForm(p, budget - 1)
-              addFormula(formula, cnf)
-            }
-            toFormula(formula)
-          case Or(ps)    =>
-            ps map (conjunctiveNormalForm(_)) reduceLeft { (a, b) =>
-              distribute(a, b, budget - (a.size + b.size))
-            }
-        }
-      }
-
-      object IsDisjunction {
-        def unapply(p: Prop): Option[Clause] = p match {
-          case Or(fv) =>
-            fv.foldLeft(Option(collection.Set[Lit]())) {
-              case (Some(clause), sym: Sym) =>
-                Some(clause + Lit(sym))
-              case (Some(clause), Not(sym: Sym)) =>
-                Some(clause + Lit(sym, false))
-              case (_, _)                   =>
-                None
-            }
-          case sym: Sym =>
-            Some(collection.Set(Lit(sym)))
-          case Not(sym: Sym) =>
-            Some(collection.Set(Lit(sym, false)))
-          case _        =>
-            None
-        }
-      }
-
-      /**
-       * Checks if propositional formula is already in CNF
-        */
-      object IsCnf {
-        def unapply(f: Prop): Option[ArrayBuffer[Clause]] = f match {
-          case And(fv) =>
-            fv.foldLeft(Option(formulaBuilder)) {
-              case (Some(cnf), IsDisjunction(clause)) =>
-                Some(cnf += clause)
-              case (_, _)                             =>
-                None
-            }
-          case True    =>
-            Some(TrueF)
-          case False   =>
-            Some(FalseF)
-          case p       =>
-            IsDisjunction.unapply(p).map(formulaBuilder += _)
-        }
-      }
-
-      val start = if (Statistics.canEnable) Statistics.startTimer(patmatCNF) else null
-      val simplified = simplify(p)
-      val res = simplified match {
-        case IsCnf(clauses) =>
-          // already in CNF, just add clauses
-          clauses
-        case p              =>
-          // expand formula into CNF
-          conjunctiveNormalForm(negationNormalForm(p))
-      }
-
-      if (Statistics.canEnable) Statistics.stopTimer(patmatCNF, start)
-
-      //
-      if (Statistics.canEnable) patmatCNFSizes(res.size).value += 1
-
-//      debug.patmat("cnf for\n"+ p +"\nis:\n"+cnfString(res))
-      res
+    
+    def cnfString(f: Array[Clause]): String = {
+      // TODO: fixme
+//      val lits: Array[List[String]] = f map (_.map(_.toString).toList)
+//      val xss: List[List[String]] = lits toList
+//      alignAcrossRows(xss, "\\/", " /\\\n")
+      ""
     }
-  }
-
-  // simple solver using DPLL
-  trait Solver extends CNF {
-    // a literal is a (possibly negated) variable
-    def Lit(sym: Sym, pos: Boolean = true) = new Lit(sym, pos)
-    class Lit(val sym: Sym, val pos: Boolean) {
-      override def toString = if (!pos) "-"+ sym.toString else sym.toString
-      override def equals(o: Any) = o match {
-        case o: Lit => (o.sym eq sym) && (o.pos == pos)
-        case _ => false
-      }
-      override def hashCode = sym.hashCode + pos.hashCode
-
-      def unary_- = Lit(sym, !pos)
-    }
-
-    def cnfString(f: Formula) = alignAcrossRows(f map (_.toList) toList, "\\/", " /\\\n")
 
     // adapted from http://lara.epfl.ch/w/sav10:simple_sat_solver (original by Hossein Hojjat)
     val EmptyModel = collection.immutable.SortedMap.empty[Sym, Boolean]
     val NoModel: Model = null
 
+    // this model contains the auxiliary variables as well
+    type TseitinModel = collection.immutable.SortedSet[Lit]
+    val EmptyTseitinModel = collection.immutable.SortedSet.empty[Lit]
+    val NoTseitinModel: TseitinModel = null
+
+    // http://docs.oracle.com/javase/7/docs/api/java/lang/System.html#nanoTime() recommends nanoTime for measuring elapsed time
+    @inline private def reachedTime(stoppingNanos: Long): Boolean = stoppingNanos != 0 && (stoppingNanos - System.nanoTime < 0)
+    private def stoppingNanosFor(millis: Long): Long = if (millis == 0) 0 else System.nanoTime + (millis * 1000000)
+
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
-    def findAllModelsFor(f: Formula): List[Model] = {
-      val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet
+    def findAllModelsFor(solvable: Solvable): List[Model] = {
+//      println(s"""findAllModelsFor ${solvable.cnf.clauses.mkString(", ")}""")
+
+    // TODO: remove?
+      val stoppingNanos: Long = 0L //stoppingNanosFor(AnalysisBudget.defaultTimeoutMillis)
+
+      val syms: Set[Sym] = solvable.symForVar.values.toSet
+      val vars: Set[Int] = solvable.symForVar.keySet
+      val ord: Map[Sym, Int] = syms.toSeq.reverse.zipWithIndex.toMap
+
+//      println("syms " + syms.mkString(", "))
+//      println("ord " + ord.mkString(", "))
+//      println("vars " + vars.mkString(", "))
+
+      val CompatibleOrdering = Ordering.by[Int, Int] {
+        variable =>
+          val symOpt: Int = solvable.symForVar.get(variable).map(ord).getOrElse(-variable) // negative to be ordered after
+          symOpt
+      }
+
+      val allVars: Set[Int] = solvable.cnf.allVariables
+//      println("elems " + elems.mkString(", "))
+//      println("ord " + elems.flatMap(solvable.symForVar.get).map(ord).mkString(", "))
+      // variables of the problem
+      // TODO: should be sorted for stable results
+//      val allVars: SortedSet[Int] = SortedSet(elems: _*)(CompatibleOrdering)
+//      println("vars "+ allVars)
+//      println("vars "+ allVars.map(v => solvable.symForVar(v)).mkString(", "))
       // debug.patmat("vars "+ vars)
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
-      def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
+      // (i.e. the blocking clause - used for ALL-SAT)
+      def negateModel(m: TseitinModel) = m.map(lit => -lit)
 
-      def findAllModels(f: Formula, models: List[Model], recursionDepthAllowed: Int = 10): List[Model]=
+      def findAllModels(clauses: Array[Clause], models: List[TseitinModel], recursionDepthAllowed: Int = 10): List[TseitinModel] =
         if (recursionDepthAllowed == 0) models
         else {
-          debug.patmat("find all models for\n"+ cnfString(f))
-          val model = findModelFor(f)
+          debug.patmat("find all models for\n" + cnfString(clauses))
+          val model = findTseitinModelFor(clauses, stoppingNanos)
           // if we found a solution, conjunct the formula with the model's negation and recurse
-          if (model ne NoModel) {
-            val unassigned = (vars -- model.keySet).toList
-            debug.patmat("unassigned "+ unassigned +" in "+ model)
+          if (model ne NoTseitinModel) {
+            val unassigned0: List[Int] = (allVars -- model.map(lit => lit.variable)).toList
+            val unassigned = unassigned0.sorted(CompatibleOrdering)
+//            println("vars " + unassigned.mkString(", "))
+            // TODO: will crash for direct CNF
+            debug.patmat(s"unassigned ${unassigned map (v => solvable.symForVar(v))} in ${projectToModel(model, solvable.symForVar)}")
+
             def force(lit: Lit) = {
-              val model = withLit(findModelFor(dropUnit(f, lit)), lit)
-              if (model ne NoModel) List(model)
+              val model = withLit(findTseitinModelFor(dropUnit(clauses.toArray, lit), stoppingNanos), lit)
+              if (model ne NoTseitinModel) List(model)
               else Nil
             }
-            val forced = unassigned flatMap { s =>
-              force(Lit(s, pos = true)) ++ force(Lit(s, pos = false))
+            val forced = unassigned flatMap { v =>
+              force(Lit(v)) ++ force(Lit(-v))
             }
-            debug.patmat("forced "+ forced)
+            debug.patmat("forced " + forced)
+
             val negated = negateModel(model)
-            findAllModels(f :+ negated, model :: (forced ++ models), recursionDepthAllowed - 1)
+            findAllModels(clauses :+ negated, model :: (forced ++ models), recursionDepthAllowed - 1)
           }
           else models
         }
 
-      findAllModels(f, Nil)
-    }
+      val tseitinModels = findAllModels(solvable.cnf.clauses, Nil)
+      val models: List[Model] = tseitinModels.map(projectToModel(_, solvable.symForVar))
 
-    private def withLit(res: Model, l: Lit): Model = if (res eq NoModel) NoModel else res + (l.sym -> l.pos)
-    private def dropUnit(f: Formula, unitLit: Lit): Formula = {
-      val negated = -unitLit
-      // drop entire clauses that are trivially true
-      // (i.e., disjunctions that contain the literal we're making true in the returned model),
-      // and simplify clauses by dropping the negation of the literal we're making true
-      // (since False \/ X == X)
-      val dropped = formulaBuilderSized(f.size)
+      val grouped: Seq[(SortedSet[Sym], List[Model])] = models.groupBy {
+        model => model.keySet
+      }.toSeq
+
+      val sorted: Seq[(SortedSet[Sym], List[Model])] = grouped.sortBy {
+        case (syms, models) => syms.map(_.id).toIterable
+      }
+
       for {
-        clause <- f
-        if !(clause contains unitLit)
-      } dropped += (clause - negated)
-      dropped
+        (keys, models) <- sorted
+        model <- models
+      } {
+        println(model)
+      }
+
+      models
     }
 
-    def findModelFor(f: Formula): Model = {
-      @inline def orElse(a: Model, b: => Model) = if (a ne NoModel) a else b
+    private def formatModel(model: Model): String = {
+      (model.toSeq.map {
+        case (sym: Sym, b: Boolean) => sym + "=" + b
+      }).mkString(", ")
+    }
 
-      debug.patmat("DPLL\n"+ cnfString(f))
+    private def withLit(res: TseitinModel, l: Lit): TseitinModel = {
+      if (res eq NoTseitinModel) NoTseitinModel else res + l
+    }
+
+    /** Drop trivially true clauses, simplify others by dropping negation of `unitLit`.
+     *
+     *  Disjunctions that contain the literal we're making true in the returned model are trivially true.
+     *  Clauses can be simplified by dropping the negation of the literal we're making true
+     *  (since False \/ X == X)
+     */
+    private def dropUnit(clauses: Array[Clause], unitLit: Lit): Array[Clause] = {
+      val negated = -unitLit
+      val simplified = new ArrayBuffer[Clause](clauses.size)
+      clauses foreach {
+        case trivial if trivial contains unitLit => // drop
+        case clause                              => simplified += clause - negated
+      }
+      simplified.toArray
+    }
+
+    def findModelFor(solvable: Solvable): Model = {
+//      println("findModelFor")
+      val stoppingNanos: Long = 0L //stoppingNanosFor(AnalysisBudget.defaultTimeoutMillis)
+      projectToModel(findTseitinModelFor(solvable.cnf.clauses, stoppingNanos), solvable.symForVar)
+    }
+
+    def findTseitinModelFor(clauses: Array[Clause], stoppingNanos: Long): TseitinModel = {
+      @inline def orElse(a: TseitinModel, b: => TseitinModel) = if (a ne NoTseitinModel) a else b
+
+//      if (reachedTime(stoppingNanos)) throw AnalysisBudget.timeout
+
+      debug.patmat(s"DPLL\n${cnfString(clauses)}")
 
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaDPLL) else null
 
-      val satisfiableWithModel: Model =
-        if (f isEmpty) EmptyModel
-        else if(f exists (_.isEmpty)) NoModel
-        else f.find(_.size == 1) match {
+      val satisfiableWithModel: TseitinModel =
+        if (clauses isEmpty) EmptyTseitinModel
+        else if (clauses exists (_.isEmpty)) NoTseitinModel
+        else clauses.find(_.size == 1) match {
           case Some(unitClause) =>
             val unitLit = unitClause.head
-            // debug.patmat("unit: "+ unitLit)
-            withLit(findModelFor(dropUnit(f, unitLit)), unitLit)
+            withLit(findTseitinModelFor(dropUnit(clauses, unitLit), stoppingNanos), unitLit)
           case _ =>
             // partition symbols according to whether they appear in positive and/or negative literals
             // SI-7020 Linked- for deterministic counter examples.
-            val pos = new mutable.LinkedHashSet[Sym]()
-            val neg = new mutable.LinkedHashSet[Sym]()
-            mforeach(f)(lit => if (lit.pos) pos += lit.sym else neg += lit.sym)
+            val pos = new mutable.LinkedHashSet[Int]()
+            val neg = new mutable.LinkedHashSet[Int]()
+
+            mforeach(clauses)(lit => if (lit.positive) pos += lit.variable else neg += lit.variable)
+
+//            println(s"""pos ${pos.mkString(", ")}""")
+//            println(s"""neg ${neg.mkString(", ")}""")
 
             // appearing in both positive and negative
-            val impures: mutable.LinkedHashSet[Sym] = pos intersect neg
+            val impures: mutable.LinkedHashSet[Int] = pos intersect neg
+
             // appearing only in either positive/negative positions
-            val pures: mutable.LinkedHashSet[Sym] = (pos ++ neg) -- impures
+            val pures: mutable.LinkedHashSet[Int] = (pos ++ neg) -- impures
 
             if (pures nonEmpty) {
-              val pureSym = pures.head
+              val pureVar: Int = pures.head
               // turn it back into a literal
               // (since equality on literals is in terms of equality
               //  of the underlying symbol and its positivity, simply construct a new Lit)
-              val pureLit = Lit(pureSym, pos(pureSym))
+              val pureLit = Lit(if (neg(pureVar)) -pureVar else pureVar)
               // debug.patmat("pure: "+ pureLit +" pures: "+ pures +" impures: "+ impures)
-              val simplified = f.filterNot(_.contains(pureLit))
-              withLit(findModelFor(simplified), pureLit)
+              val simplified = clauses.filterNot(_.contains(pureLit))
+              withLit(findTseitinModelFor(simplified, stoppingNanos), pureLit)
             } else {
-              val split = f.head.head
+              val split = clauses.head.head
               // debug.patmat("split: "+ split)
-              orElse(findModelFor(f :+ clause(split)), findModelFor(f :+ clause(-split)))
+              orElse(findTseitinModelFor(clauses :+ clause(split), stoppingNanos), findTseitinModelFor(clauses :+ clause(-split), stoppingNanos))
             }
         }
 
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaDPLL, start)
       satisfiableWithModel
     }
+
+    private def projectToModel(model: TseitinModel, symForVar: Map[Int, Sym]): Model =
+      if (model == NoTseitinModel) NoModel
+      else {
+        val a: List[(Sym, Boolean)] = model.toList collect {
+          case lit if symForVar isDefinedAt lit.variable => (symForVar(lit.variable), lit.positive)
+        }
+        collection.immutable.SortedMap(a: _*)
+      }
   }
 }

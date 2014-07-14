@@ -12,6 +12,7 @@ import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.reflect.internal.util.Position
 import scala.reflect.internal.util.HashSet
+import scala.collection.mutable.ArrayBuffer
 import scala.annotation.tailrec
 
 trait Logic extends Debugging  {
@@ -127,7 +128,7 @@ trait Logic extends Debugging  {
 
     // symbols are propositions
     final class Sym private[PropositionalLogic] (val variable: Var, val const: Const) extends Prop {
-      private val id: Int = Sym.nextSymId
+      val id: Int = Sym.nextSymId
 
       override def toString = variable + "=" + const + "#" + id
     }
@@ -296,7 +297,7 @@ trait Logic extends Debugging  {
     // TODO: for V1 representing x1 and V2 standing for x1.head, encode that
     //       V1 = Nil implies -(V2 = Ci) for all Ci in V2's domain (i.e., it is unassignable)
     // may throw an AnalysisBudget.Exception
-    def removeVarEq(props: List[Prop], modelNull: Boolean = false): (Formula, List[Formula]) = {
+    def removeVarEq(props: List[Prop], modelNull: Boolean = false): (Prop, List[Prop]) = {
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaVarEq) else null
 
       val vars = mutable.LinkedHashSet[Var]()
@@ -320,10 +321,10 @@ trait Logic extends Debugging  {
       props foreach gatherEqualities.apply
       if (modelNull) vars foreach (_.registerNull())
 
-      val pure = props map (p => eqFreePropToSolvable(rewriteEqualsToProp(p)))
+      val pure = props map (p => rewriteEqualsToProp(p))
 
-      val eqAxioms = formulaBuilder
-      @inline def addAxiom(p: Prop) = addFormula(eqAxioms, eqFreePropToSolvable(p))
+      val eqAxioms = mutable.ArrayBuffer[Prop]()
+      @inline def addAxiom(p: Prop) = eqAxioms += p
 
       debug.patmat("removeVarEq vars: "+ vars)
       vars.foreach { v =>
@@ -349,49 +350,30 @@ trait Logic extends Debugging  {
         }
       }
 
-      debug.patmat(s"eqAxioms:\n$eqAxioms")
+      debug.patmat(s"eqAxioms:\n${eqAxioms.mkString("\n")}")
       debug.patmat(s"pure:${pure.mkString("\n")}")
 
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaVarEq, start)
 
-      (toFormula(eqAxioms), pure)
+      (And(eqAxioms: _*), pure)
     }
 
+    case class Solvable(cnf: CNFBuilder, symForVar: Map[Int, Sym])
 
-    // an interface that should be suitable for feeding a SAT solver when the time comes
-    type Formula
-    type FormulaBuilder
-
-    // creates an empty formula builder to which more formulae can be added
-    def formulaBuilder: FormulaBuilder
-
-    // val f = formulaBuilder; addFormula(f, f1); ... addFormula(f, fN)
-    // toFormula(f) == andFormula(f1, andFormula(..., fN))
-    def addFormula(buff: FormulaBuilder, f: Formula): Unit
-    def toFormula(buff: FormulaBuilder): Formula
-
-    // the conjunction of formulae `a` and `b`
-    def andFormula(a: Formula, b: Formula): Formula
-
-    // equivalent formula to `a`, but simplified in a lightweight way (drop duplicate clauses)
-    def simplifyFormula(a: Formula): Formula
-
-    // may throw an AnalysisBudget.Exception
-    def propToSolvable(p: Prop): Formula = {
-      val (eqAxioms, pure :: Nil) = removeVarEq(List(p), modelNull = false)
-      andFormula(eqAxioms, pure)
+    def propToSolvable(p: Prop): Solvable = {
+      val (eqAxiom, pure :: Nil) = removeVarEq(List(p), modelNull = false)
+      eqFreePropToSolvable(And(eqAxiom, pure))
     }
 
-    // may throw an AnalysisBudget.Exception
-    def eqFreePropToSolvable(p: Prop): Formula
-    def cnfString(f: Formula): String
+    def eqFreePropToSolvable(f: Prop): Solvable
 
     type Model = collection.immutable.SortedMap[Sym, Boolean]
     val EmptyModel: Model
     val NoModel: Model
 
-    def findModelFor(f: Formula): Model
-    def findAllModelsFor(f: Formula): List[Model]
+    def findModelFor(solvable: Solvable): Model
+
+    def findAllModelsFor(solvable: Solvable): List[Model]
   }
 }
 

@@ -432,10 +432,11 @@ trait MatchAnalysis extends MatchApproximation {
       try {
         val (eqAxiomsFail, symbolicCasesFail) = removeVarEq(propsCasesFail, modelNull = true)
         val (eqAxiomsOk, symbolicCasesOk)     = removeVarEq(propsCasesOk,   modelNull = true)
-        val eqAxioms = simplifyFormula(andFormula(eqAxiomsOk, eqAxiomsFail)) // I'm pretty sure eqAxiomsOk == eqAxiomsFail, but not 100% sure.
+        // TODO: obsolete
+        val eqAxioms = simplify(And(eqAxiomsOk, eqAxiomsFail)) // I'm pretty sure eqAxiomsOk == eqAxiomsFail, but not 100% sure.
 
-        val prefix   = formulaBuilder
-        addFormula(prefix, eqAxioms)
+        val prefix = mutable.ArrayBuffer[Prop]()
+        prefix += eqAxioms
 
         var prefixRest = symbolicCasesFail
         var current    = symbolicCasesOk
@@ -443,7 +444,7 @@ trait MatchAnalysis extends MatchApproximation {
         var caseIndex  = 0
 
         debug.patmat("reachability, vars:\n"+ ((propsCasesFail flatMap gatherVariables).distinct map (_.describe) mkString ("\n")))
-        debug.patmat("equality axioms:\n"+ cnfString(eqAxiomsOk))
+        debug.patmat(s"equality axioms:\n$eqAxiomsOk")
 
         // invariant (prefixRest.length == current.length) && (prefix.reverse ++ prefixRest == symbolicCasesFail)
         // termination: prefixRest.length decreases by 1
@@ -453,9 +454,9 @@ trait MatchAnalysis extends MatchApproximation {
           prefixRest = prefixRest.tail
           if (prefixRest.isEmpty) reachable = true
           else {
-            addFormula(prefix, prefHead)
+            prefix += prefHead
             current = current.tail
-            val model = findModelFor(andFormula(current.head, toFormula(prefix)))
+            val model    = findModelFor(eqFreePropToSolvable(And((current.head +: prefix) : _*)))
 
             // debug.patmat("trying to reach:\n"+ cnfString(current.head) +"\nunder prefix:\n"+ cnfString(prefix))
             // if (NoModel ne model) debug.patmat("reached: "+ modelString(model))
