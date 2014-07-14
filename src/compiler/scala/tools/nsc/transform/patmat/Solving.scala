@@ -6,6 +6,7 @@
 
 package scala.tools.nsc.transform.patmat
 
+import scala.collection.immutable.SortedSet
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.language.postfixOps
@@ -146,7 +147,10 @@ trait Solving extends Logic {
 
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
     def findAllModelsFor(f: Formula): List[Model] = {
+//      println(s"findAllModelsFor $f")
+
       val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet
+//      println("vars "+ vars)
       // debug.patmat("vars "+ vars)
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
       def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
@@ -158,7 +162,8 @@ trait Solving extends Logic {
           val model = findModelFor(f)
           // if we found a solution, conjunct the formula with the model's negation and recurse
           if (model ne NoModel) {
-            val unassigned = (vars -- model.keySet).toList
+            val unassigned: List[Sym] = (vars -- model.keySet).toList
+//                  println("vars "+ unassigned)
             debug.patmat("unassigned "+ unassigned +" in "+ model)
             def force(lit: Lit) = {
               val model = withLit(findModelFor(dropUnit(f, lit)), lit)
@@ -175,7 +180,24 @@ trait Solving extends Logic {
           else models
         }
 
-      findAllModels(f, Nil)
+      val models: List[Model] = findAllModels(f, Nil)
+
+      val grouped: Seq[(SortedSet[Sym], List[Model])] = models.groupBy {
+        model => model.keySet
+      }.toSeq
+
+      val sorted: Seq[(SortedSet[Sym], List[Model])] = grouped.sortBy {
+        case (syms, models) => syms.map(_.id).toIterable
+      }
+
+      for {
+        (keys, models) <- sorted
+        model <- models
+      } {
+        println(model)
+      }
+
+      models
     }
 
     private def withLit(res: Model, l: Lit): Model = if (res eq NoModel) NoModel else res + (l.sym -> l.pos)
@@ -194,6 +216,8 @@ trait Solving extends Logic {
     }
 
     def findModelFor(f: Formula): Model = {
+//      println(s"findModelFor $f")
+
       @inline def orElse(a: Model, b: => Model) = if (a ne NoModel) a else b
 
       debug.patmat("DPLL\n"+ cnfString(f))
@@ -214,8 +238,9 @@ trait Solving extends Logic {
             val pos = new mutable.LinkedHashSet[Sym]()
             val neg = new mutable.LinkedHashSet[Sym]()
             mforeach(f)(lit => if (lit.pos) pos += lit.sym else neg += lit.sym)
-
-            // appearing in both positive and negative
+//            println(s"""pos ${pos.mkString(", ")}""")
+//            println(s"""neg ${neg.mkString(", ")}""")
+            // appearing in both positive and negative   –
             val impures: mutable.LinkedHashSet[Sym] = pos intersect neg
             // appearing only in either positive/negative positions
             val pures: mutable.LinkedHashSet[Sym] = (pos ++ neg) -- impures
