@@ -10,7 +10,17 @@ import scala.collection.immutable.SortedSet
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.language.postfixOps
-import scala.reflect.internal.util.Collections._
+import scala.Some
+import org.sat4j.tools.ModelIterator
+import org.sat4j.minisat.SolverFactory
+import scala.annotation.tailrec
+import org.sat4j.specs.ContradictionException
+import org.sat4j.specs.TimeoutException
+import org.sat4j.specs.IVec
+import org.sat4j.specs.IVecInt
+import org.sat4j.core.VecInt
+import org.sat4j.core.Vec
+import org.sat4j.specs.ISolver
 
 // naive CNF translation and simple DPLL solver
 trait Solving extends Logic {
@@ -49,6 +59,10 @@ trait Solving extends Logic {
     // throws an AnalysisBudget.Exception when the prop results in a CNF that's too big
     // TODO: be smarter/more efficient about this (http://lara.epfl.ch/w/sav09:tseitin_s_encoding)
     def eqFreePropToSolvable(p: Prop): Formula = {
+
+      println("eqFreePropToSolvable")
+      println(p)
+
       def negationNormalFormNot(p: Prop, budget: Int): Prop =
         if (budget <= 0) throw AnalysisBudget.exceeded
         else p match {
@@ -124,7 +138,7 @@ trait Solving extends Logic {
     }
   }
 
-  // simple solver using DPLL
+  // simple wrapper around a SAT solver
   trait Solver extends CNF {
     // a literal is a (possibly negated) variable
     def Lit(sym: Sym, pos: Boolean = true) = new Lit(sym, pos)
@@ -145,124 +159,143 @@ trait Solving extends Logic {
     val EmptyModel = collection.immutable.SortedMap.empty[Sym, Boolean]
     val NoModel: Model = null
 
-    // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
-    def findAllModelsFor(f: Formula): List[Model] = {
-//      println(s"findAllModelsFor $f")
-
-      val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet
-//      println("vars "+ vars)
-      // debug.patmat("vars "+ vars)
-      // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
-      def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
-
-      def findAllModels(f: Formula, models: List[Model], recursionDepthAllowed: Int = 10): List[Model]=
-        if (recursionDepthAllowed == 0) models
-        else {
-          debug.patmat("find all models for\n"+ cnfString(f))
-          val model = findModelFor(f)
-          // if we found a solution, conjunct the formula with the model's negation and recurse
-          if (model ne NoModel) {
-            val unassigned: List[Sym] = (vars -- model.keySet).toList
-//                  println("vars "+ unassigned)
-            debug.patmat("unassigned "+ unassigned +" in "+ model)
-            def force(lit: Lit) = {
-              val model = withLit(findModelFor(dropUnit(f, lit)), lit)
-              if (model ne NoModel) List(model)
-              else Nil
-            }
-            val forced = unassigned flatMap { s =>
-              force(Lit(s, pos = true)) ++ force(Lit(s, pos = false))
-            }
-            debug.patmat("forced "+ forced)
-            val negated = negateModel(model)
-            findAllModels(f :+ negated, model :: (forced ++ models), recursionDepthAllowed - 1)
-          }
-          else models
-        }
-
-      val models: List[Model] = findAllModels(f, Nil)
-
-      val grouped: Seq[(SortedSet[Sym], List[Model])] = models.groupBy {
+    def printModels(models: List[Model]) {
+      val groupedByKey = models.groupBy {
         model => model.keySet
-      }.toSeq
+      }.mapValues {
+        models =>
+          models.sortWith {
+            case (a, b) =>
+            val keys = a.keys
+            val decider = keys.dropWhile(key => a(key) == b(key))
+            decider.headOption.map(key => a(key) < b(key)).getOrElse(false)
+          }
+      }
 
-      val sorted: Seq[(SortedSet[Sym], List[Model])] = grouped.sortBy {
+      val sortedByKeys: Seq[(SortedSet[Sym], List[Model])] = groupedByKey.toSeq.sortBy {
         case (syms, models) => syms.map(_.id).toIterable
       }
 
       for {
-        (keys, models) <- sorted
+        (keys, models) <- sortedByKeys
         model <- models
       } {
         println(model)
       }
+    }
+
+    def findModelFor(f: Formula): Model = {
+//      debug.patmat(s"searching for one model for:\n${cnf.dimacs}")
+      val solver = SolverFactory.newDefault()
+      //      solver.setTimeoutMs(timeout)
+
+      val symForVar: Map[Int, Sym] = (for {
+        s <- f
+        l <- s
+      } yield {
+        l.sym.id ->l.sym
+      }).toMap
+
+      val satisfiableWithModel = try {
+        solver.addAllClauses(clausesForFormula(f))
+        if (solver.isSatisfiable()) {
+          extractModel(solver, symForVar)
+        } else {
+          NoModel
+        }
+      } catch {
+        case _: ContradictionException =>
+          // TODO not sure if it's ok for this to happen since we have constant propagation
+          NoModel
+        case _: TimeoutException       =>
+          throw AnalysisBudget.exceeded
+      }
+
+      println("onemodel")
+      printModels(List(satisfiableWithModel))
+
+      satisfiableWithModel
+    }
+
+    // returns all solutions, if any
+    def findAllModelsFor(f: Formula): List[Model] = {
+//      debug.patmat(s"searching for all models for:\n${cnf.dimacs}")
+
+      val solver: ModelIterator = new ModelIterator(SolverFactory.newDefault())
+      //      solver.setTimeoutMs(timeout)
+
+      val symForVar: Map[Int, Sym] = (for {
+        s <- f
+        l <- s
+      } yield {
+        l.sym.id ->l.sym
+      }).toMap
+
+      import scala.reflect.internal.util.Statistics
+
+      //      val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaSAT) else null
+      val models = try {
+        @tailrec
+        def allModels(acc: List[Model] = Nil): List[Model] = if (solver.isSatisfiable()) {
+          val valuation = extractModel(solver, symForVar)
+          allModels(valuation :: acc)
+        } else {
+          acc
+        }
+
+        solver.addAllClauses(clausesForFormula(f))
+
+        allModels()
+      } catch {
+        case _: ContradictionException =>
+          // TODO not sure if it's ok for this to happen since we have constant propagation
+          Nil
+        case _: TimeoutException       =>
+          throw AnalysisBudget.exceeded
+      }
+
+      println("problem")
+      println(cnfString(f))
+      println("allmodels")
+      printModels(models)
 
       models
     }
 
-    private def withLit(res: Model, l: Lit): Model = if (res eq NoModel) NoModel else res + (l.sym -> l.pos)
-    private def dropUnit(f: Formula, unitLit: Lit): Formula = {
-      val negated = -unitLit
-      // drop entire clauses that are trivially true
-      // (i.e., disjunctions that contain the literal we're making true in the returned model),
-      // and simplify clauses by dropping the negation of the literal we're making true
-      // (since False \/ X == X)
-      val dropped = formulaBuilderSized(f.size)
-      for {
-        clause <- f
-        if !(clause contains unitLit)
-      } dropped += (clause - negated)
-      dropped
+    //      if (Statistics.canEnable) Statistics.stopTimer(patmatAnaSAT, start)
+    private def clausesForFormula(f: Formula): IVec[IVecInt] = {
+      def dimacs(lit: Lit) = if(lit.pos) lit.sym.id else -lit.sym.id
+      val clauses: Array[IVecInt] = f.toArray.map(clause => new VecInt(clause.map(dimacs).toArray))
+      val cl = new Vec(clauses)
+      println(cl)
+      cl
     }
 
-    def findModelFor(f: Formula): Model = {
-//      println(s"findModelFor $f")
+    private def extractModel(solver: ISolver, symForVar: Map[Int, Sym]): Model = {
+      val model = solver.model()
 
-      @inline def orElse(a: Model, b: => Model) = if (a ne NoModel) a else b
+      val model0 = model.toSet
+      require(model.length == model0.size, "literal lost")
 
-      debug.patmat("DPLL\n"+ cnfString(f))
-
-      val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaDPLL) else null
-
-      val satisfiableWithModel: Model =
-        if (f isEmpty) EmptyModel
-        else if(f exists (_.isEmpty)) NoModel
-        else f.find(_.size == 1) match {
-          case Some(unitClause) =>
-            val unitLit = unitClause.head
-            // debug.patmat("unit: "+ unitLit)
-            withLit(findModelFor(dropUnit(f, unitLit)), unitLit)
-          case _ =>
-            // partition symbols according to whether they appear in positive and/or negative literals
-            // SI-7020 Linked- for deterministic counter examples.
-            val pos = new mutable.LinkedHashSet[Sym]()
-            val neg = new mutable.LinkedHashSet[Sym]()
-            mforeach(f)(lit => if (lit.pos) pos += lit.sym else neg += lit.sym)
-//            println(s"""pos ${pos.mkString(", ")}""")
-//            println(s"""neg ${neg.mkString(", ")}""")
-            // appearing in both positive and negative   –
-            val impures: mutable.LinkedHashSet[Sym] = pos intersect neg
-            // appearing only in either positive/negative positions
-            val pures: mutable.LinkedHashSet[Sym] = (pos ++ neg) -- impures
-
-            if (pures nonEmpty) {
-              val pureSym = pures.head
-              // turn it back into a literal
-              // (since equality on literals is in terms of equality
-              //  of the underlying symbol and its positivity, simply construct a new Lit)
-              val pureLit = Lit(pureSym, pos(pureSym))
-              // debug.patmat("pure: "+ pureLit +" pures: "+ pures +" impures: "+ impures)
-              val simplified = f.filterNot(_.contains(pureLit))
-              withLit(findModelFor(simplified), pureLit)
-            } else {
-              val split = f.head.head
-              // debug.patmat("split: "+ split)
-              orElse(findModelFor(f :+ clause(split)), findModelFor(f :+ clause(-split)))
-            }
+      object PolarityForVar {
+        def unapply(v: Int): Option[Boolean] = {
+          if (model0.contains(v)) {
+            Some(true)
+          } else if (model0.contains(-v)) {
+            Some(false)
+          } else {
+            // literal has no influence on formula
+            // sys.error(s"Literal not found ${lit} (should assume nondet)")
+            // (if uncommented this error causes the regression tests to fail)
+            // TODO: not sure if just omitting is causing other problems
+            None
+          }
         }
-
-      if (Statistics.canEnable) Statistics.stopTimer(patmatAnaDPLL, start)
-      satisfiableWithModel
+      }
+      // don't extract intermediate literals
+      collection.immutable.SortedMap(symForVar.toSeq.collect {
+        case (PolarityForVar(polarity), sym) => sym -> polarity
+      }: _*)
     }
   }
 }
