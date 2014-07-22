@@ -1,5 +1,5 @@
 virtpatmat_exhaust_compound.scala:14: warning: match may not be exhaustive.
-It would fail on the following inputs: O1, O2, O4
+It would fail on the following inputs: ??, O1, O2, O4
   a match {
   ^
 virtpatmat_exhaust_compound.scala:18: warning: match may not be exhaustive.

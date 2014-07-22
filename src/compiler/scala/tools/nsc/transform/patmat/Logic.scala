@@ -113,7 +113,7 @@ trait Logic extends Debugging  {
 
     // symbols are propositions
     abstract case class Sym(variable: Var, const: Const) extends Prop {
-      private val id: Int = Sym.nextSymId
+      val id: Int = Sym.nextSymId
 
       override def toString = variable +"="+ const +"#"+ id
     }
@@ -239,12 +239,24 @@ trait Logic extends Debugging  {
         // coverage is formulated as: A \/ B \/ C and the implications are
         v.domainSyms foreach { dsyms => addAxiom(\/(dsyms)) }
 
+        // restrict to only one of the possible subtypes
+        for {
+          dsyms <- v.domainSyms
+          combins <- dsyms.toSeq.combinations(2)
+//          if combins.forall(_.const != NullConst)
+        } {
+          val negated = combins.map(Not)
+          addAxiom(\/(negated))
+        }
+
         // when this variable cannot be null the equality corresponding to the type test `(x: T)`, where T is x's static type,
         // is always true; when the variable may be null we use the implication `(x != null) => (x: T)` for the axiom
         v.symForStaticTp foreach { symForStaticTp =>
           if (v.mayBeNull) addAxiom(Or(v.propForEqualsTo(NullConst), symForStaticTp))
           else addAxiom(symForStaticTp)
         }
+
+        println(s"$v -> ${v.implications}")
 
         v.implications foreach { case (sym, implied, excluded) =>
           // when sym is true, what must hold...
