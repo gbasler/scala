@@ -11,8 +11,8 @@ It would fail on the following inputs: (Kult(_), Kult(_)), (Qult(), Qult())
     def ma3(x:Mult) = (x,x) match { // not exhaustive
                       ^
 patmatexhaust.scala:49: warning: match may not be exhaustive.
-It would fail on the following inputs: Gp(), Gu
-    def ma4(x:Deep) = x match { // missing cases: Gu, Gp
+It would fail on the following input: Gp()
+    def ma4(x:Deep) = x match { // missing cases: Gu, Gp which is not abstract so must be included
                       ^
 patmatexhaust.scala:55: warning: unreachable code
       case _ if 1 == 0 =>
@@ -21,6 +21,9 @@ patmatexhaust.scala:53: warning: match may not be exhaustive.
 It would fail on the following input: Gp()
     def ma5(x:Deep) = x match {
                       ^
+patmatexhaust.scala:77: warning: unreachable code
+    case B2   => true
+                 ^
 patmatexhaust.scala:75: warning: match may not be exhaustive.
 It would fail on the following input: B()
   def ma9(x: B) = x match {
@@ -38,5 +41,5 @@ It would fail on the following input: C1()
     def ma10(x: C) = x match { // not exhaustive: C1 is not abstract.
                      ^
 error: No warnings can be incurred under -Xfatal-warnings.
-10 warnings found
+11 warnings found
 one error found

@@ -698,6 +698,11 @@ trait MatchAnalysis extends MatchApproximation {
           if (!allFieldAssignmentsLegal) NoExample
           else {
             debug.patmat("describing "+ ((variable, equalTo, notEqualTo, fields, cls, allFieldAssignmentsLegal)))
+            val a = cls != NoSymbol
+            val b = !isPrimitiveValueClass(cls)
+            val c = uniqueEqualTo.nonEmpty
+            val d = (fields.nonEmpty && prunedEqualTo.isEmpty && notEqualTo.isEmpty)
+            val e = fields
             val res = prunedEqualTo match {
               // a definite assignment to a value
               case List(eq: ValueConst) if fields.isEmpty => ValueExample(eq)
@@ -705,9 +710,7 @@ trait MatchAnalysis extends MatchApproximation {
               // constructor call
               // or we did not gather any information about equality but we have information about the fields
               //  --> typical example is when the scrutinee is a tuple and all the cases first unwrap that tuple and only then test something interesting
-              case _ if cls != NoSymbol && !isPrimitiveValueClass(cls) &&
-                        (  uniqueEqualTo.nonEmpty
-                        || (fields.nonEmpty && prunedEqualTo.isEmpty && notEqualTo.isEmpty)) =>
+              case _ if a && b && (c || d) =>
 
                 def args(brevity: Boolean = beBrief) = {
                   // figure out the constructor arguments from the field assignment
@@ -734,10 +737,14 @@ trait MatchAnalysis extends MatchApproximation {
                   NegativeExample(eqTo, nonTrivialNonEqualTo)
                 }
 
+             // case hd :: tl if fields.isEmpty => TypeExample(hd)
+
               // not a valid counter-example, possibly since we have a definite type but there was a field mismatch
               // TODO: improve reasoning -- in the mean time, a false negative is better than an annoying false positive
               case _ => NoExample
             }
+            def st(b: Boolean) = if(b) "*" else "-"
+            debug.patmat(s"${st(a)}${st(b)}${st(c)}${st(d)}: ${equalTo}, ${notEqualTo} => $res")
             debug.patmatResult("described as")(res)
           }
 

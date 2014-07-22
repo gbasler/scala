@@ -6,6 +6,12 @@
 
 package scala.tools.nsc.transform.patmat
 
+import org.sat4j.core.{Vec, VecInt}
+import org.sat4j.minisat.SolverFactory
+import org.sat4j.specs._
+import org.sat4j.tools.ModelIterator
+
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.language.postfixOps
@@ -144,38 +150,156 @@ trait Solving extends Logic {
     val EmptyModel = collection.immutable.SortedMap.empty[Sym, Boolean]
     val NoModel: Model = null
 
+    private def clausesForCnf(f: Formula) = {
+      def dimacs(l: Lit) = if(l.pos) l.sym.id else -l.sym.id
+      val clauses: Array[IVecInt] = f.map(clause => new VecInt(clause.map(dimacs).toArray)).toArray
+      new Vec(clauses)
+    }
+
+    private def extractModel(solver: ISolver, f: Formula): collection.immutable.SortedMap[Sym, Boolean] = {
+      val litForSym = collection.immutable.SortedMap(f.flatMap(clause => clause.map(l => l.sym -> l)):_*)
+      val model = solver.model()
+
+      val model0 = model.toSet
+      require(model.length == model0.size, "literal lost")
+
+      object PolarityForLiteral {
+        def unapply(lit: Lit): Option[Boolean] = {
+          if (model0.contains(lit.sym.id)) {
+            Some(true)
+          } else if (model0.contains(-lit.sym.id)) {
+            Some(false)
+          } else {
+            // literal has no influence on formula
+            // sys.error(s"Literal not found ${lit} (should assume nondet)")
+            // (if uncommented this error causes the regression tests to fail)
+            // TODO: not sure if just omitting is causing other problems
+            None
+          }
+        }
+      }
+
+      // don't extract intermediate literals
+      litForSym.collect {
+        case (v, PolarityForLiteral(polarity)) => v -> polarity
+      }
+    }
+
+    // returns all solutions, if any
+//    def findAllModelsFor(f: Formula): List[Model] = {
+//
+//      debug.patmat("DPLL\n"+ cnfString(f))
+//
+//      val solver: ModelIterator = new ModelIterator(SolverFactory.newDefault())
+//      solver.setTimeoutMs(10*1000)
+//
+//      val models = try {
+//        @tailrec
+//        def allModels(acc: List[Model] = Nil): List[Model] = if (solver.isSatisfiable()) {
+//          val valuation = extractModel(solver, f)
+//          allModels(valuation :: acc)
+//        } else {
+//          acc
+//        }
+//
+//        solver.addAllClauses(clausesForCnf(f))
+//
+//        allModels()
+//      } catch {
+//        case _: ContradictionException =>
+//          // TODO not sure if it's ok for this to happen since we have constant propagation
+//          Nil
+//        case _: TimeoutException       =>
+//          throw AnalysisBudget.exceeded
+//      }
+//
+//      printModels(models)
+//
+//      models
+//    }
+
+    private def printModels(models: List[Model]) {
+      for {
+        m <- models
+      } {
+        val l = (for {
+          (sym, v) <- m
+        } yield {
+          s"""${if (v) "" else "-"}${sym}"""
+        }).mkString(", ")
+        println("solution: " + l)
+      }
+    }
+
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
     def findAllModelsFor(f: Formula): List[Model] = {
+
+      debug.patmat("DPLL\n"+ cnfString(f))
+
       val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet
       // debug.patmat("vars "+ vars)
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
       def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
 
-      def findAllModels(f: Formula, models: List[Model], recursionDepthAllowed: Int = 10): List[Model]=
-        if (recursionDepthAllowed == 0) models
-        else {
-          debug.patmat("find all models for\n"+ cnfString(f))
+      def findAllModels(f: Formula, models: List[Model], recursionDepthAllowed: Int = 20): List[Model]=
+        if (recursionDepthAllowed == 0) {
+          global.currentRun.reporting.uncheckedWarning(scala.reflect.internal.util.NoPosition,
+            "DPLL reached recursion depth, not all missing cases are reported.")
+          models
+        } else {
+          //          debug.patmat("find all models for\n"+ cnfString(f))
           val model = findModelFor(f)
           // if we found a solution, conjunct the formula with the model's negation and recurse
           if (model ne NoModel) {
+//            println("found model")
+//            printModels(List(model))
             val unassigned = (vars -- model.keySet).toList
             debug.patmat("unassigned "+ unassigned +" in "+ model)
-            def force(lit: Lit) = {
-              val model = withLit(findModelFor(dropUnit(f, lit)), lit)
-              if (model ne NoModel) List(model)
+            def force(lit: Lit, model: Model) = {
+              val model0 = withLit(model, lit)
+              if (model0 ne NoModel) List(model0)
               else Nil
             }
-            val forced = unassigned flatMap { s =>
-              force(Lit(s, pos = true)) ++ force(Lit(s, pos = false))
+
+            def expandUnassigned(unassigned: List[Sym], model: Model): List[Model] = {
+              var current = mutable.ArrayBuffer[Model]()
+              var next = mutable.ArrayBuffer[Model]()
+              current.sizeHint(1 << unassigned.size)
+              next.sizeHint(1 << unassigned.size)
+
+              current += model
+
+              for {
+                s <- unassigned
+              } {
+                for {
+                  model <- current
+                } {
+                  next ++= force(Lit(s, pos = true), model)
+                  next ++= force(Lit(s, pos = false), model)
+                }
+
+                val tmp = current
+                current = next
+                next = tmp
+
+                next.clear()
+              }
+
+              current.toList
             }
+
+            val forced = expandUnassigned(unassigned, model)
             debug.patmat("forced "+ forced)
             val negated = negateModel(model)
-            findAllModels(f :+ negated, model :: (forced ++ models), recursionDepthAllowed - 1)
+            findAllModels(f :+ negated, forced ++ models, recursionDepthAllowed - 1)
           }
           else models
         }
 
-      findAllModels(f, Nil)
+      val models = findAllModels(f, Nil)
+//      printModels(models)
+      models
     }
 
     private def withLit(res: Model, l: Lit): Model = if (res eq NoModel) NoModel else res + (l.sym -> l.pos)
@@ -196,7 +320,7 @@ trait Solving extends Logic {
     def findModelFor(f: Formula): Model = {
       @inline def orElse(a: Model, b: => Model) = if (a ne NoModel) a else b
 
-      debug.patmat("DPLL\n"+ cnfString(f))
+//      debug.patmat("DPLL\n"+ cnfString(f))
 
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaDPLL) else null
 
