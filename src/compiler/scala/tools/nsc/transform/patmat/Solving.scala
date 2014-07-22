@@ -160,17 +160,44 @@ trait Solving extends Logic {
           if (model ne NoModel) {
             val unassigned = (vars -- model.keySet).toList
             debug.patmat("unassigned "+ unassigned +" in "+ model)
-            def force(lit: Lit) = {
-              val model = withLit(findModelFor(dropUnit(f, lit)), lit)
-              if (model ne NoModel) List(model)
+            def force(lit: Lit, model: Model) = {
+              val model0 = withLit(model, lit)
+              if (model0 ne NoModel) List(model0)
               else Nil
             }
-            val forced = unassigned flatMap { s =>
-              force(Lit(s, pos = true)) ++ force(Lit(s, pos = false))
+
+            def expandUnassigned(unassigned: List[Sym], model: Model): List[Model] = {
+              var current = mutable.ArrayBuffer[Model]()
+              var next = mutable.ArrayBuffer[Model]()
+              current.sizeHint(1 << unassigned.size)
+              next.sizeHint(1 << unassigned.size)
+
+              current += model
+
+              for {
+                s <- unassigned
+              } {
+                for {
+                  model <- current
+                } {
+                  next ++= force(Lit(s, pos = true), model)
+                  next ++= force(Lit(s, pos = false), model)
+                }
+
+                val tmp = current
+                current = next
+                next = tmp
+
+                next.clear()
+              }
+
+              current.toList
             }
+
+            val forced = expandUnassigned(unassigned, model)
             debug.patmat("forced "+ forced)
             val negated = negateModel(model)
-            findAllModels(f :+ negated, model :: (forced ++ models), recursionDepthAllowed - 1)
+            findAllModels(f :+ negated, forced ++ models, recursionDepthAllowed - 1)
           }
           else models
         }
