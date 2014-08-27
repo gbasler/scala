@@ -146,6 +146,13 @@ trait Solving extends Logic {
 
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
     def findAllModelsFor(f: Formula): List[Model] = {
+
+      debug.patmat("DPLL\n"+ cnfString(f))
+
+//      f.remove(7)
+      f(7)+=(f.last.head)
+      debug.patmat("DPLL fixed\n"+ cnfString(f))
+
       val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet
       // debug.patmat("vars "+ vars)
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
@@ -154,7 +161,7 @@ trait Solving extends Logic {
       def findAllModels(f: Formula, models: List[Model], recursionDepthAllowed: Int = 10): List[Model]=
         if (recursionDepthAllowed == 0) models
         else {
-          debug.patmat("find all models for\n"+ cnfString(f))
+//          debug.patmat("find all models for\n"+ cnfString(f))
           val model = findModelFor(f)
           // if we found a solution, conjunct the formula with the model's negation and recurse
           if (model ne NoModel) {
@@ -202,7 +209,18 @@ trait Solving extends Logic {
           else models
         }
 
-      findAllModels(f, Nil)
+      val models = findAllModels(f, Nil)
+      for {
+        m <- models
+      } {
+        val l = (for {
+          (sym,v) <- m
+        } yield {
+          s"""${if(v)"" else "-"}${sym}"""
+        }).mkString(", ")
+        println("solution: " + l)
+      }
+      models
     }
 
     private def withLit(res: Model, l: Lit): Model = if (res eq NoModel) NoModel else res + (l.sym -> l.pos)
@@ -223,7 +241,7 @@ trait Solving extends Logic {
     def findModelFor(f: Formula): Model = {
       @inline def orElse(a: Model, b: => Model) = if (a ne NoModel) a else b
 
-      debug.patmat("DPLL\n"+ cnfString(f))
+//      debug.patmat("DPLL\n"+ cnfString(f))
 
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaDPLL) else null
 

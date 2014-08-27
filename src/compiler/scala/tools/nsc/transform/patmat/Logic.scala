@@ -243,6 +243,7 @@ trait Logic extends Debugging  {
         for {
           dsyms <- v.domainSyms
           combins <- dsyms.toSeq.combinations(2)
+//          if combins.forall(_.const != NullConst)
         } {
           val negated = combins.map(Not)
           addAxiom(\/(negated))
@@ -254,6 +255,8 @@ trait Logic extends Debugging  {
           if (v.mayBeNull) addAxiom(Or(v.propForEqualsTo(NullConst), symForStaticTp))
           else addAxiom(symForStaticTp)
         }
+
+        println(s"$v -> ${v.implications}")
 
         v.implications foreach { case (sym, implied, excluded) =>
           // when sym is true, what must hold...
