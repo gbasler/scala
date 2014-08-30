@@ -6,6 +6,12 @@
 
 package scala.tools.nsc.transform.patmat
 
+import org.sat4j.core.{Vec, VecInt}
+import org.sat4j.minisat.SolverFactory
+import org.sat4j.specs._
+import org.sat4j.tools.ModelIterator
+
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.language.postfixOps
@@ -144,13 +150,81 @@ trait Solving extends Logic {
     val EmptyModel = collection.immutable.SortedMap.empty[Sym, Boolean]
     val NoModel: Model = null
 
-    // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
+    private def clausesForCnf(f: Formula) = {
+      def dimacs(l: Lit) = if(l.pos) l.sym.id else -l.sym.id
+      val clauses: Array[IVecInt] = f.map(clause => new VecInt(clause.map(dimacs).toArray)).toArray
+      new Vec(clauses)
+    }
+
+    private def extractModel(solver: ISolver, f: Formula): collection.immutable.SortedMap[Sym, Boolean] = {
+      val litForSym = collection.immutable.SortedMap(f.flatMap(clause => clause.map(l => l.sym -> l)):_*)
+      val model = solver.model()
+
+      val model0 = model.toSet
+      require(model.length == model0.size, "literal lost")
+
+      object PolarityForLiteral {
+        def unapply(lit: Lit): Option[Boolean] = {
+          if (model0.contains(lit.sym.id)) {
+            Some(true)
+          } else if (model0.contains(-lit.sym.id)) {
+            Some(false)
+          } else {
+            // literal has no influence on formula
+            // sys.error(s"Literal not found ${lit} (should assume nondet)")
+            // (if uncommented this error causes the regression tests to fail)
+            // TODO: not sure if just omitting is causing other problems
+            None
+          }
+        }
+      }
+
+      // don't extract intermediate literals
+      litForSym.collect {
+        case (v, PolarityForLiteral(polarity)) => v -> polarity
+      }
+    }
+
+    // returns all solutions, if any
     def findAllModelsFor(f: Formula): List[Model] = {
 
       debug.patmat("DPLL\n"+ cnfString(f))
 
+      val solver: ModelIterator = new ModelIterator(SolverFactory.newDefault())
+      solver.setTimeoutMs(10*1000)
+
+      val models = try {
+        @tailrec
+        def allModels(acc: List[Model] = Nil): List[Model] = if (solver.isSatisfiable()) {
+          val valuation = extractModel(solver, f)
+          allModels(valuation :: acc)
+        } else {
+          acc
+        }
+
+        solver.addAllClauses(clausesForCnf(f))
+
+        allModels()
+      } catch {
+        case _: ContradictionException =>
+          // TODO not sure if it's ok for this to happen since we have constant propagation
+          Nil
+        case _: TimeoutException       =>
+          throw AnalysisBudget.exceeded
+      }
+
+      models
+    }
+
+
+    // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
+    def findAllModelsFor2(f: Formula): List[Model] = {
+
+      debug.patmat("DPLL\n"+ cnfString(f))
+
 //      f.remove(7)
-      f(7)+=(f.last.head)
+//      f(7)+=(f.last.head)
+//      f += clause(f.head.last)
       debug.patmat("DPLL fixed\n"+ cnfString(f))
 
       val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet

@@ -113,7 +113,7 @@ trait Logic extends Debugging  {
 
     // symbols are propositions
     abstract case class Sym(variable: Var, const: Const) extends Prop {
-      private val id: Int = Sym.nextSymId
+      val id: Int = Sym.nextSymId
 
       override def toString = variable +"="+ const +"#"+ id
     }
