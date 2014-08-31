@@ -194,7 +194,7 @@ trait Logic extends Debugging  {
     def removeVarEq(props: List[Prop], modelNull: Boolean = false): (Formula, List[Formula]) = {
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaVarEq) else null
 
-      val vars = new scala.collection.mutable.HashSet[Var]
+      val vars = new mutable.HashSet[Var]
 
       object gatherEqualities extends PropTraverser {
         override def apply(p: Prop) = p match {

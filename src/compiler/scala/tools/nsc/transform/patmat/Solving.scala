@@ -8,6 +8,7 @@ package scala.tools.nsc.transform.patmat
 
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
+import scala.reflect.internal.util.Collections._
 
 // naive CNF translation and simple DPLL solver
 trait Solving extends Logic {
@@ -254,16 +255,14 @@ trait Solving extends Logic {
             withLit(findModelFor(dropUnit(f, unitLit)), unitLit)
           case _ =>
             // partition symbols according to whether they appear in positive and/or negative literals
-            // SI-7020 Linked- for deterministic counter examples.
-            val pos = new mutable.LinkedHashSet[Sym]()
-            val neg = new mutable.LinkedHashSet[Sym]()
-            f.foreach{_.foreach{ lit =>
-              if (lit.pos) pos += lit.sym else neg += lit.sym
-            }}
+            val pos = new mutable.HashSet[Sym]()
+            val neg = new mutable.HashSet[Sym]()
+            mforeach(f)(lit => if (lit.pos) pos += lit.sym else neg += lit.sym)
+
             // appearing in both positive and negative
-            val impures: mutable.LinkedHashSet[Sym] = pos intersect neg
+            val impures = pos intersect neg
             // appearing only in either positive/negative positions
-            val pures: mutable.LinkedHashSet[Sym] = (pos ++ neg) -- impures
+            val pures = (pos ++ neg) -- impures
 
             if (pures nonEmpty) {
               val pureSym = pures.head
