@@ -10,7 +10,6 @@ package tools.nsc.transform.patmat
 import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
-import scala.reflect.internal.util.Position
 import scala.reflect.internal.util.HashSet
 
 trait Logic extends Debugging  {
@@ -72,6 +71,8 @@ trait Logic extends Debugging  {
       def unapply(v: Var): Some[Tree]
     }
 
+    def reportWarning(message: String): Unit
+
     // resets hash consing -- only supposed to be called by TreeMakersToProps
     def prepareNewAnalysis(): Unit
 
@@ -87,6 +88,9 @@ trait Logic extends Debugging  {
 
       // compute the domain and return it (call registerNull first!)
       def domainSyms: Option[mutable.LinkedHashSet[Sym]]
+
+      // contains (pairs of) domain symbols that are not in a subtype relation
+      def mutuallyExclusiveDomainSyms: Option[Seq[Seq[Sym]]]
 
       // the symbol for this variable being equal to its statically known type
       // (only available if registerEquality has been called for that type before)
@@ -238,6 +242,15 @@ trait Logic extends Debugging  {
         // consider X ::= A | B | C, and A => B
         // coverage is formulated as: A \/ B \/ C and the implications are
         v.domainSyms foreach { dsyms => addAxiom(\/(dsyms)) }
+
+        // restrict solutions to only one of the possible subtypes of a domain
+        for {
+          dsyms <- v.mutuallyExclusiveDomainSyms
+          mutuallyExclusiveSyms <- dsyms
+        } {
+          val negated = mutuallyExclusiveSyms.map(Not)
+          addAxiom(\/(negated))
+        }
 
         // when this variable cannot be null the equality corresponding to the type test `(x: T)`, where T is x's static type,
         // is always true; when the variable may be null we use the implication `(x != null) => (x: T)` for the axiom
@@ -487,6 +500,41 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
 
       // accessing after calling registerNull will result in inconsistencies
       lazy val domainSyms: Option[collection.mutable.LinkedHashSet[Sym]] = domain map { _ map symForEqualsTo }
+
+      /**
+       * If we have the following classes
+       *   sealed abstract class Deep
+       *   case object Ga extends Deep
+       *   sealed class Gp extends Deep
+       *   case object Gu extends Gp
+       *
+       * And
+       *   x match {
+       *     case Ga =>
+       *   }
+       *
+       * Then the pattern match could be made exhaustive by adding
+       * just `case Gp =>`.
+       * However we want to report `Gu` as well since it's could also
+       * make sense to pattern match on Gu first and then match on Gp.
+       * See also patmatexhaust.scala
+       */
+      lazy val mutuallyExclusiveDomainSyms: Option[Seq[Seq[Sym]]] = domainSyms map {
+        _.toSeq.combinations(2).toIndexedSeq.filterNot { case Seq(a, b) =>
+
+          // performance: there are n*(n-1)/2 pairs to check, so
+          // we try to avoid the subtype relation check if possible
+          def needsCheck(sym: Sym) = {
+            !sym.const.tp.typeSymbol.isAbstractClass && sym.const.tp.typeSymbol.children.nonEmpty
+          }
+
+          def isSub(sym1: Sym, sym2: Sym) = {
+            needsCheck(sym2) && sym1.const.tp <:< sym2.const.tp
+          }
+
+          isSub(a, b) || isSub(b, a)
+        }
+      }
 
       lazy val symForStaticTp: Option[Sym]  = symForEqualsTo.get(TypeConst(staticTpCheckable))
 
