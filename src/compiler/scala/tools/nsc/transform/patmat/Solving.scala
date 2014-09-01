@@ -147,10 +147,14 @@ trait Solving extends Logic {
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
       def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
 
-      def findAllModels(f: Formula, models: List[Model], recursionDepthAllowed: Int = 20): List[Model]=
+      def findAllModels(f: Formula,
+                        models: List[Model],
+                        recursionDepthAllowed: Int = global.settings.YpatmatDPLLdepth.value): List[Model]=
         if (recursionDepthAllowed == 0) {
+          val maxDPLLdepth = global.settings.YpatmatDPLLdepth.value
           global.reporter.warning(scala.reflect.internal.util.NoPosition,
-            "DPLL reached max recursion depth, not all missing cases are reported.")
+            "(Unreachability analysis reached max recursion depth, not all missing cases are reported. " +
+              s"Please try with scalac -Ypatmat-exhaust-depth ${maxDPLLdepth * 2} or -Ypatmat-exhaust-depth off.)")
           models
         } else {
           val model = findModelFor(f)
