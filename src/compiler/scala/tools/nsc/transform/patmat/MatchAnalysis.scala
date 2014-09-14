@@ -9,7 +9,6 @@ package scala.tools.nsc.transform.patmat
 import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
-import scala.reflect.internal.util.Position
 
 trait TreeAndTypeAnalysis extends Debugging {
   import global._
@@ -400,6 +399,7 @@ trait MatchAnalysis extends MatchApproximation {
   trait MatchAnalyzer extends MatchApproximator  {
     def uncheckedWarning(pos: Position, msg: String) = currentRun.reporting.uncheckedWarning(pos, msg)
     def warn(pos: Position, ex: AnalysisBudget.Exception, kind: String) = uncheckedWarning(pos, s"Cannot check match for $kind.\n${ex.advice}")
+    def reportWarning(message: String) = global.reporter.warning(typer.context.tree.pos, message)
 
   // TODO: model dependencies between variables: if V1 corresponds to (x: List[_]) and V2 is (x.hd), V2 cannot be assigned when V1 = null or V1 = Nil
     // right now hackily implement this by pruning counter-examples
@@ -525,8 +525,11 @@ trait MatchAnalysis extends MatchApproximation {
 
           val scrutVar = Var(prevBinderTree)
           val counterExamples = matchFailModels.map(modelToCounterExample(scrutVar))
-
-          val pruned = CounterExample.prune(counterExamples).map(_.toString).sorted
+          val relevant = counterExamples.filterNot(_ == NoExampleHidden)
+          // sorting before pruning is important here in order to
+          // keep neg/t7020.scala stable
+          // since e.g. List(_, _) would cover List(1, _)
+          val pruned = CounterExample.prune(relevant.sortBy(_.toString)).map(_.toString)
 
           if (Statistics.canEnable) Statistics.stopTimer(patmatAnaExhaust, start)
           pruned
@@ -598,6 +601,7 @@ trait MatchAnalysis extends MatchApproximation {
 
     case object WildcardExample extends CounterExample { override def toString = "_" }
     case object NoExample extends CounterExample { override def toString = "??" }
+    case object NoExampleHidden extends CounterExample { override def toString = "[??]" }
 
     def modelToVarAssignment(model: Model): Map[Var, (Seq[Const], Seq[Const])] =
       model.toSeq.groupBy{f => f match {case (sym, value) => sym.variable} }.mapValues{ xs =>
@@ -674,6 +678,7 @@ trait MatchAnalysis extends MatchApproximation {
         private val fields: mutable.Map[Symbol, VariableAssignment] = mutable.HashMap.empty
         // need to prune since the model now incorporates all super types of a constant (needed for reachability)
         private lazy val uniqueEqualTo = equalTo filterNot (subsumed => equalTo.exists(better => (better ne subsumed) && instanceOfTpImplies(better.tp, subsumed.tp)))
+        private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
         private lazy val prunedEqualTo = uniqueEqualTo filterNot (subsumed => variable.staticTpCheckable <:< subsumed.tp)
         private lazy val ctor       = (prunedEqualTo match { case List(TypeConst(tp)) => tp case _ => variable.staticTpCheckable }).typeSymbol.primaryConstructor
         private lazy val ctorParams = if (ctor.paramss.isEmpty) Nil else ctor.paramss.head
@@ -713,13 +718,24 @@ trait MatchAnalysis extends MatchApproximation {
                   // figure out the constructor arguments from the field assignment
                   val argLen = (caseFieldAccs.length min ctorParams.length)
 
-                  (0 until argLen).map(i => fields.get(caseFieldAccs(i)).map(_.toCounterExample(brevity)) getOrElse WildcardExample).toList
+                  val examples = (0 until argLen).map(i => fields.get(caseFieldAccs(i)).map(_.toCounterExample(brevity)) getOrElse WildcardExample)
+                  // neg/t7020.scala: report List(_, _) instead of List(??, _)
+                  examples match {
+                    case Seq(NoExample, l: ListExample) => List(WildcardExample, l)
+                    case ex => ex.toList
+                  }
                 }
 
                 cls match {
                   case ConsClass               => ListExample(args())
                   case _ if isTupleSymbol(cls) => TupleExample(args(brevity = true))
-                  case _ => ConstructorExample(cls, args())
+                  case _ =>
+                    val examples = args()
+                    if (examples.contains(NoExampleHidden) || cls.isSealed && cls.isAbstractClass) {
+                      NoExampleHidden
+                    } else {
+                      ConstructorExample(cls, examples)
+                    }
                 }
 
               // a definite assignment to a type
@@ -734,6 +750,11 @@ trait MatchAnalysis extends MatchApproximation {
                   NegativeExample(eqTo, nonTrivialNonEqualTo)
                 }
 
+              // if uniqueEqualTo contains more than one symbol of the same domain
+              // then we can safely ignore these counter examples since we will eventually encounter
+              // both counter examples separately
+              case _ if inSameDomain => NoExampleHidden
+                
               // not a valid counter-example, possibly since we have a definite type but there was a field mismatch
               // TODO: improve reasoning -- in the mean time, a false negative is better than an annoying false positive
               case _ => NoExample
