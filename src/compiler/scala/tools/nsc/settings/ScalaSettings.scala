@@ -199,6 +199,8 @@ trait ScalaSettings extends AbsScalaSettings
   val Yrepldebug              = BooleanSetting("-Yrepl-debug", "Trace all repl activity.") andThen (interpreter.replProps.debug setValue _)
   val Ytyperdebug             = BooleanSetting("-Ytyper-debug", "Trace all type assignments.")
   val Ypatmatdebug            = BooleanSetting("-Ypatmat-debug", "Trace pattern matching translation.")
+  val YpatmatExhaustdepth     = IntSetting("-Ypatmat-exhaust-depth", "off", 20, Some((10, Int.MaxValue)),
+    str => Some(if(str.equalsIgnoreCase("off")) Int.MaxValue else str.toInt))
 
   /** Groups of Settings.
    */
