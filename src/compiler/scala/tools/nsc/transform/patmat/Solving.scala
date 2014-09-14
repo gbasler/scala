@@ -146,31 +146,81 @@ trait Solving extends Logic {
 
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
     def findAllModelsFor(f: Formula): List[Model] = {
+
+      debug.patmat("find all models for\n"+ cnfString(f))
+
       val vars: Set[Sym] = f.flatMap(_ collect {case l: Lit => l.sym}).toSet
       // debug.patmat("vars "+ vars)
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
       def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
 
-      def findAllModels(f: Formula, models: List[Model], recursionDepthAllowed: Int = 10): List[Model]=
-        if (recursionDepthAllowed == 0) models
-        else {
-          debug.patmat("find all models for\n"+ cnfString(f))
+      def findAllModels(f: Formula,
+                        models: List[Model],
+                        recursionDepthAllowed: Int = global.settings.YpatmatExhaustdepth.value): List[Model]=
+        if (recursionDepthAllowed == 0) {
+          val maxDPLLdepth = global.settings.YpatmatExhaustdepth.value
+          reportWarning("(Exhaustivity analysis reached max recursion depth, not all missing cases are reported. " +
+              s"Please try with scalac -Ypatmat-exhaust-depth ${maxDPLLdepth * 2} or -Ypatmat-exhaust-depth off.)")
+          models
+        } else {
           val model = findModelFor(f)
           // if we found a solution, conjunct the formula with the model's negation and recurse
           if (model ne NoModel) {
             val unassigned = (vars -- model.keySet).toList
             debug.patmat("unassigned "+ unassigned +" in "+ model)
-            def force(lit: Lit) = {
-              val model = withLit(findModelFor(dropUnit(f, lit)), lit)
-              if (model ne NoModel) List(model)
+            def force(lit: Lit, model: Model) = {
+              val model0 = withLit(model, lit)
+              if (model0 ne NoModel) List(model0)
               else Nil
             }
-            val forced = unassigned flatMap { s =>
-              force(Lit(s, pos = true)) ++ force(Lit(s, pos = false))
+
+            /**
+             * The DPLL procedure only returns a minimal mapping from literal to value
+             * such that the CNF formula is satisfied.
+             * E.g. for:
+             * `(a \/ b)`
+             * The DPLL procedure will find either {a = true} or {b = true}
+             * as solution.
+             *
+             * The expansion step will amend both solutions with the unassigned variable
+             * i.e., {a = true} will be expanded to {a = true, b = true} and {a = true, b = false}.
+             */
+            def expandUnassigned(unassigned: List[Sym], model: Model): List[Model] = {
+              // the number of solutions is doubled for every unassigned variable
+              val expandedModels = 1 << unassigned.size
+              var current = mutable.ArrayBuffer[Model]()
+              var next = mutable.ArrayBuffer[Model]()
+              current.sizeHint(expandedModels)
+              next.sizeHint(expandedModels)
+
+              current += model
+
+              // we use double buffering:
+              // read from `current` and create a two models for each model in `next`
+              for {
+                s <- unassigned
+              } {
+                for {
+                  model <- current
+                } {
+                  next ++= force(Lit(s, pos = true), model)
+                  next ++= force(Lit(s, pos = false), model)
+                }
+
+                val tmp = current
+                current = next
+                next = tmp
+
+                next.clear()
+              }
+
+              current.toList
             }
+
+            val forced = expandUnassigned(unassigned, model)
             debug.patmat("forced "+ forced)
             val negated = negateModel(model)
-            findAllModels(f :+ negated, model :: (forced ++ models), recursionDepthAllowed - 1)
+            findAllModels(f :+ negated, forced ++ models, recursionDepthAllowed - 1)
           }
           else models
         }
