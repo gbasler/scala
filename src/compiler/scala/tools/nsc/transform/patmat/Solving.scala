@@ -147,6 +147,51 @@ trait Solving extends Logic {
       // the negation of a model -(S1=True/False /\ ... /\ SN=True/False) = clause(S1=False/True, ...., SN=False/True)
       def negateModel(m: Model) = clause(m.toSeq.map{ case (sym, pos) => Lit(sym, !pos) } : _*)
 
+      /**
+       * The DPLL procedure only returns a minimal mapping from literal to value
+       * such that the CNF formula is satisfied.
+       * E.g. for:
+       * `(a \/ b)`
+       * The DPLL procedure will find either {a = true} or {b = true}
+       * as solution.
+       *
+       * The expansion step will amend both solutions with the unassigned variable
+       * i.e., {a = true} will be expanded to {a = true, b = true} and {a = true, b = false}.
+       */
+      def expandUnassigned(unassigned: List[Sym], model: Model): List[Model] = {
+        // the number of solutions is doubled for every unassigned variable
+        val expandedModels = 1 << unassigned.size
+        var current = mutable.ArrayBuffer[Model]()
+        var next = mutable.ArrayBuffer[Model]()
+        current.sizeHint(expandedModels)
+        next.sizeHint(expandedModels)
+
+        current += model
+
+        // we use double buffering:
+        // read from `current` and create a two models for each model in `next`
+        for {
+          s <- unassigned
+        } {
+          for {
+            model <- current
+          } {
+            def force(l: Lit) = model + (l.sym -> l.pos)
+
+            next += force(Lit(s, pos = true))
+            next += force(Lit(s, pos = false))
+          }
+
+          val tmp = current
+          current = next
+          next = tmp
+
+          next.clear()
+        }
+
+        current.toList
+      }
+
       def findAllModels(f: Formula,
                         models: List[Model],
                         recursionDepthAllowed: Int = global.settings.YpatmatExhaustdepth.value): List[Model]=
@@ -161,54 +206,6 @@ trait Solving extends Logic {
           if (model ne NoModel) {
             val unassigned = (vars -- model.keySet).toList
             debug.patmat("unassigned "+ unassigned +" in "+ model)
-            def force(lit: Lit, model: Model) = {
-              val model0 = withLit(model, lit)
-              if (model0 ne NoModel) List(model0)
-              else Nil
-            }
-
-            /**
-             * The DPLL procedure only returns a minimal mapping from literal to value
-             * such that the CNF formula is satisfied.
-             * E.g. for:
-             * `(a \/ b)`
-             * The DPLL procedure will find either {a = true} or {b = true}
-             * as solution.
-             *
-             * The expansion step will amend both solutions with the unassigned variable
-             * i.e., {a = true} will be expanded to {a = true, b = true} and {a = true, b = false}.
-             */
-            def expandUnassigned(unassigned: List[Sym], model: Model): List[Model] = {
-              // the number of solutions is doubled for every unassigned variable
-              val expandedModels = 1 << unassigned.size
-              var current = mutable.ArrayBuffer[Model]()
-              var next = mutable.ArrayBuffer[Model]()
-              current.sizeHint(expandedModels)
-              next.sizeHint(expandedModels)
-
-              current += model
-
-              // we use double buffering:
-              // read from `current` and create a two models for each model in `next`
-              for {
-                s <- unassigned
-              } {
-                for {
-                  model <- current
-                } {
-                  next ++= force(Lit(s, pos = true), model)
-                  next ++= force(Lit(s, pos = false), model)
-                }
-
-                val tmp = current
-                current = next
-                next = tmp
-
-                next.clear()
-              }
-
-              current.toList
-            }
 
             val forced = expandUnassigned(unassigned, model)
             debug.patmat("forced "+ forced)
