@@ -55,7 +55,7 @@ curlDownload() {
   if [[ "$OSTYPE" == *Cygwin* || "$OSTYPE" == *cygwin* ]]; then
     jar=$(cygpath -m $1)
   fi
-  http_code=$(curl --write-out '%{http_code}' --silent --fail --output "$jar" "$url")
+  http_code=$(curl --write-out '%{http_code}' --silent --fail --proxy 127.0.0.1:9992 --output "$jar" "$url")
   if (( $? != 0 )); then
     echo "Error downloading $jar: response code: $http_code"
     echo "$url"
@@ -184,18 +184,19 @@ pullJarFileToCache() {
   local sha=$2
   local cache_loc="$(makeCacheLocation $uri)"
   # TODO - Check SHA of local cache is accurate.
-  if test -f "$cache_loc" && test "$(checkJarSha "$cache_loc" "$sha")" != "OK"; then
-    echo "Found bad cached file: $cache_loc"
-    rm -f "$cache_loc"
-  fi
+  #if test -f "$cache_loc" && test "$(checkJarSha "$cache_loc" "$sha")" != "OK"; then
+  #  echo "Found bad cached file: $cache_loc"
+  #  rm -f "$cache_loc"
+  #fi
   if [[ ! -f "$cache_loc" ]]; then
     # Note: After we follow up with JFrog, we should check the more stable raw file server first
     # before hitting the more flaky artifactory.
+    echo "loading... $cache_loc ${remote_urlget}/${uri}"
     curlDownload $cache_loc ${remote_urlget}/${uri}
-    if test "$(checkJarSha "$cache_loc" "$sha")" != "OK"; then
-      echo "Trouble downloading $uri.  Please try pull-binary-libs again when your internet connection is stable."
-      exit 2
-    fi
+    #if test "$(checkJarSha "$cache_loc" "$sha")" != "OK"; then
+    #  echo "Trouble downloading $uri.  Please try pull-binary-libs again when your internet connection is stable."
+    #  exit 2
+    #fi
   fi
 }
 
