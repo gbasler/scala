@@ -798,19 +798,32 @@ trait MatchAnalysis extends MatchApproximation {
       val varAssignment: Map[Var, (Seq[Const], Seq[Const])] = modelToVarAssignment(model)
       val assignments = if (solution.unassigned.isEmpty) {
         List(varAssignment)
+      } else if(solution.unassigned.size ==1) {
+        println(solution.unassigned)
+        val variable = solution.unassigned.head.variable
+        val assign = solution.unassigned.head.const
+        varAssignment.get(variable) match {
+          case Some((trues, falses)) =>
+            List(varAssignment - variable + (variable ->(trues :+ assign, falses)), varAssignment - variable + (variable ->(trues, falses :+ assign)))
+          case None                  =>
+            List(varAssignment + (variable ->(Seq(assign), Seq())), varAssignment + (variable ->(Seq(), Seq(assign))))
+        }
       } else {
         sealed abstract class Grouping
 
         /* e.g., Scala ADT's (sealed types) */
-        case class ByDomain(domain: Map[Set[Type], List[Sym]]) extends Grouping
+        case class ByDomain(domain: Set[Type]) extends Grouping
 
         /* e.g. ints or Java types? */
-        case class ByType(domain: Map[Set[Type], List[Sym]]) extends Grouping
+        case class ByType(domain: Type) extends Grouping
 
         val grouped: Map[Grouping, List[Sym]] = solution.unassigned.groupBy {
           (s: Sym) =>
-            val byDomains = s.variable.domainSyms.map(_.map(_.const.tp))
-            byDomains.fold(ByType(s.const.tp))(ByDomain(_))
+            val byDomains: Option[Set[Type]] = s.variable.domainSyms.map(_.map(_.const.tp))
+            val a: Option[ByDomain] = byDomains.map(ByDomain(_))
+              val b = ByType(s.const.tp)
+              a.getOrElse(b)
+//            byDomains.fold[Grouping](ByType(s.const.tp))(ByDomain(_))
         }
 
         def addToVar(variable: Var, assign: Const): Seq[Map[Var, (Seq[Const], Seq[Const])]] = {
@@ -821,32 +834,83 @@ trait MatchAnalysis extends MatchApproximation {
               Seq(varAssignment + (variable ->(Seq(assign), Seq())), varAssignment + (variable ->(Seq(), Seq(assign))))
           }
         }
-        def addToVar0(sym: Sym, others: Sym): Seq[Map[Var, (Seq[Const], Seq[Const])]] = {
 
-          val trues0 = Seq(sym.const)
-          val falses0 = others.map(sym => sym.const)
+        def addToVar0(sym: Sym, others: Seq[Sym]): Map[Var, (Seq[Const], Seq[Const])] = {
 
-          varAssignment.get(variable) match {
+          val trues0 = IndexedSeq(sym.const)
+          val falses0 = others.map(sym => sym.const).toIndexedSeq
+
+          varAssignment.get(sym.variable) match {
             case Some((trues, falses)) =>
-              Seq(varAssignment + (variable ->(trues :+ assign, falses)), varAssignment + (variable ->(trues, falses :+ assign)))
+              println("simple: " + trues)
+              varAssignment + (sym.variable ->(trues.toIndexedSeq ++ trues0, falses.toIndexedSeq ++ falses0))
             case None                  =>
-              Seq(varAssignment + (variable ->(Seq(assign), Seq())), varAssignment + (variable ->(Seq(), Seq(assign))))
+              varAssignment + (sym.variable ->(trues0, falses0))
           }
         }
 
+        def addToVarNeg0(sym: Sym, others: Seq[Sym]): Map[Var, (Seq[Const], Seq[Const])] = {
+
+          val trues0 = IndexedSeq(sym.const)
+          val falses0 = others.map(sym => sym.const).toIndexedSeq
+
+          varAssignment.get(sym.variable) match {
+            case Some((trues, falses)) =>
+              println("simple: " + trues)
+              varAssignment + (sym.variable ->(trues.toIndexedSeq, trues0 ++ falses.toIndexedSeq ++ falses0))
+            case None                  =>
+              varAssignment + (sym.variable ->(IndexedSeq(), trues0 ++ falses0))
+          }
+        }
+
+        def addToVarAllNeg(varAssignment: Map[Var, (Seq[Const], Seq[Const])],
+                           syms: Seq[Sym]): Map[Var, (Seq[Const], Seq[Const])] = {
+
+          def addNeg(sym: Sym,
+                     varAssignment: Map[Var, (Seq[Const], Seq[Const])]) = {
+            varAssignment.get(sym.variable) match {
+              case Some((trues, falses)) =>
+                varAssignment + (sym.variable ->(trues.toIndexedSeq, (falses :+ sym.const).toIndexedSeq))
+              case None                  =>
+                varAssignment + (sym.variable ->(IndexedSeq(), IndexedSeq(sym.const)))
+            }
+          }
+
+          syms.foldLeft(varAssignment) {
+            case (map, sym) => addNeg(sym, map)
+          }
+
+        }
+
         /* only one symbol per grouping can be enabled */
-        grouped.flatMap {
+        val more = grouped.flatMap {
           case (byType: ByType, syms: List[Sym]) =>
             for {
-              (tps: Set[Type], syms: List[Sym]) <- byType.domain
+              sym <- syms
+            } yield {
+              addToVar0(sym, grouped.values.flatten.toIndexedSeq.filterNot(_ == sym))
+            }
+          case (byDomain: ByDomain, syms: List[Sym]) =>
+            for {
               sym <- syms
             } yield {
               addToVar0(sym, syms.filterNot(_ == sym))
             }
-          case (byDomain: ByDomain, syms: List[Sym]) =>
-
-          case (variable, assign) => addToVar(variable, assign)
-        }.toList
+        }.toIndexedSeq ++         grouped.flatMap {
+                  case (byType: ByType, syms: List[Sym]) =>
+                    for {
+                      sym <- syms
+                    } yield {
+                      addToVar0(sym, grouped.values.flatten.toIndexedSeq.filterNot(_ == sym))
+                    }
+                  case (byDomain: ByDomain, syms: List[Sym]) =>
+                    for {
+                      sym <- syms
+                    } yield {
+                      addToVarNeg0(sym, syms.filterNot(_ == sym))
+                    }
+                }.toIndexedSeq
+         more.toList
       }
 
 //      val byDomains: Map[Option[Set[Type]], List[Sym]] = solution.unassigned.groupBy {
@@ -863,6 +927,8 @@ trait MatchAnalysis extends MatchApproximation {
 
 
       //      uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
+
+      println(varAssignment)
 
       assignments.flatMap(v => solutionToCounterExample(scrutVar)(v))
     }
