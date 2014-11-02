@@ -835,27 +835,21 @@ trait MatchAnalysis extends MatchApproximation {
             variable -> notNegated
         }.toSeq
 
+        val emptyTrues0: Seq[(Var, List[Sym])] = emptyTrues.filter(_._2.nonEmpty)
+
         val unassigned: List[Sym] = solution.unassigned.filter(sym => emptyTrues contains sym.variable)
 
         // TODO: rest of domain???
 
         @tailrec
         def setEmptyVars(varAssignments: List[Map[Var, (Seq[Const], Seq[Const])]],
-                         emptyVars: List[Var]): List[Map[Var, (Seq[Const], Seq[Const])]] = emptyVars match {
+                         emptyVars: List[(Var, List[Sym])]): List[Map[Var, (Seq[Const], Seq[Const])]] = emptyVars match {
           case Nil          => varAssignments
-          case variable :: tail =>
-            val canBeEqualTo: List[Sym] = solution.unassigned.filter(sym => sym.variable == variable)
+          case (variable, canBeEqualTo) :: tail =>
             val variableSetToTrue = canBeEqualTo.flatMap {
               (sym: Sym) =>
-                varAssignments.filter {
-                  case (assign: Map[Var, (Seq[Const], Seq[Const])]) =>
-                    val (trues, falses) = assign(variable)
-
-                    assign + (variable ->(Seq(sym.const), falses))
-                }
-
                 varAssignments.map {
-                  (assign: Map[Var, (Seq[Const], Seq[Const])]) =>
+                  case (assign: Map[Var, (Seq[Const], Seq[Const])]) =>
                     val (trues, falses) = assign(variable)
 
                     assign + (variable ->(Seq(sym.const), falses))
