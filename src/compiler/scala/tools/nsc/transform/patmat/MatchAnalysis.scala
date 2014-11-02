@@ -6,6 +6,7 @@
 
 package scala.tools.nsc.transform.patmat
 
+import scala.collection.immutable.Iterable
 import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
@@ -520,10 +521,10 @@ trait MatchAnalysis extends MatchApproximation {
 
         try {
           // find the models (under which the match fails)
-          val matchFailModels = findAllModelsFor(propToSolvable(matchFails))
+          val matchFailModels: List[Solution] = findAllModelsFor(propToSolvable(matchFails))
 
           val scrutVar = Var(prevBinderTree)
-          val counterExamples = matchFailModels.flatMap(modelToCounterExample(scrutVar))
+          val counterExamples = matchFailModels.flatMap(solutionToCounterExample0(scrutVar))
           // sorting before pruning is important here in order to
           // keep neg/t7020.scala stable
           // since e.g. List(_, _) would cover List(1, _)
@@ -600,12 +601,30 @@ trait MatchAnalysis extends MatchApproximation {
     case object WildcardExample extends CounterExample { override def toString = "_" }
     case object NoExample extends CounterExample { override def toString = "??" }
 
-    def modelToVarAssignment(model: Model): Map[Var, (Seq[Const], Seq[Const])] =
-      model.toSeq.groupBy{f => f match {case (sym, value) => sym.variable} }.mapValues{ xs =>
+    // returns a mapping from variable to
+    // equal and notEqual symbols
+    def modelToVarAssignment(model: Model): Map[Var, (Seq[Const], Seq[Const])] = {
+      val grouped: Map[Var, Seq[(Sym, Boolean)]] = model.toSeq.groupBy(_._1.variable)
+      grouped.mapValues { xs =>
         val (trues, falses) = xs.partition(_._2)
         (trues map (_._1.const), falses map (_._1.const))
         // should never be more than one value in trues...
       }
+    }
+
+//    // returns a mapping from variable to
+//    // equal and notEqual symbols
+//    def modelToPowerVarAssignment(solution: Solution): Map[Var, (Seq[Const], Seq[Const])] = {
+//      val grouped: Map[Var, Seq[(Sym, Boolean)]] = solution.model.toSeq.groupBy(_._1.variable)
+//      solution.unassigned.map {
+//        unassigned =>
+//          grouped.mapValues { xs =>
+//            val (trues, falses) = xs.partition(_._2)
+//            (trues map (_._1.const) :+ unassigned, falses map (_._1.const))
+//            // should never be more than one value in trues...
+//          }
+//      }
+//    }
 
     def varAssignmentString(varAssignment: Map[Var, (Seq[Const], Seq[Const])]) =
       varAssignment.toSeq.sortBy(_._1.toString).map { case (v, (trues, falses)) =>
@@ -771,6 +790,253 @@ trait MatchAnalysis extends MatchApproximation {
 
       // this is the variable we want a counter example for
       VariableAssignment(scrutVar).toCounterExample()
+    }
+
+    def solutionToCounterExample0(scrutVar: Var)(solution: Solution): List[CounterExample] = {
+      import solution.model
+      val both: Map[Var, Const] = solution.unassigned.map(s => s.variable -> s.const).toMap
+      val varAssignment: Map[Var, (Seq[Const], Seq[Const])] = modelToVarAssignment(model)
+      val assignments = if (solution.unassigned.isEmpty) {
+        List(varAssignment)
+      } else {
+        sealed abstract class Grouping
+
+        /* e.g., Scala ADT's (sealed types) */
+        case class ByDomain(domain: Map[Set[Type], List[Sym]]) extends Grouping
+
+        /* e.g. ints or Java types? */
+        case class ByType(domain: Map[Set[Type], List[Sym]]) extends Grouping
+
+        val grouped: Map[Grouping, List[Sym]] = solution.unassigned.groupBy {
+          (s: Sym) =>
+            val byDomains = s.variable.domainSyms.map(_.map(_.const.tp))
+            byDomains.fold(ByType(s.const.tp))(ByDomain(_))
+        }
+
+        def addToVar(variable: Var, assign: Const): Seq[Map[Var, (Seq[Const], Seq[Const])]] = {
+          varAssignment.get(variable) match {
+            case Some((trues, falses)) =>
+              Seq(varAssignment + (variable ->(trues :+ assign, falses)), varAssignment + (variable ->(trues, falses :+ assign)))
+            case None                  =>
+              Seq(varAssignment + (variable ->(Seq(assign), Seq())), varAssignment + (variable ->(Seq(), Seq(assign))))
+          }
+        }
+        def addToVar0(sym: Sym, others: Sym): Seq[Map[Var, (Seq[Const], Seq[Const])]] = {
+
+          val trues0 = Seq(sym.const)
+          val falses0 = others.map(sym => sym.const)
+
+          varAssignment.get(variable) match {
+            case Some((trues, falses)) =>
+              Seq(varAssignment + (variable ->(trues :+ assign, falses)), varAssignment + (variable ->(trues, falses :+ assign)))
+            case None                  =>
+              Seq(varAssignment + (variable ->(Seq(assign), Seq())), varAssignment + (variable ->(Seq(), Seq(assign))))
+          }
+        }
+
+        /* only one symbol per grouping can be enabled */
+        grouped.flatMap {
+          case (byType: ByType, syms: List[Sym]) =>
+            for {
+              (tps: Set[Type], syms: List[Sym]) <- byType.domain
+              sym <- syms
+            } yield {
+              addToVar0(sym, syms.filterNot(_ == sym))
+            }
+          case (byDomain: ByDomain, syms: List[Sym]) =>
+
+          case (variable, assign) => addToVar(variable, assign)
+        }.toList
+      }
+
+//      val byDomains: Map[Option[Set[Type]], List[Sym]] = solution.unassigned.groupBy {
+//        (s: Sym) =>
+//          val a: Option[Set[Type]] = s.variable.domainSyms.map(_.map(_.const.tp))
+//          a
+//      }
+//
+//      val byTypes: Map[Type, List[Sym]] = solution.unassigned.groupBy {
+//        (s: Sym) =>
+//          val a: Type = s.const.tp
+//          a
+//      }
+
+
+      //      uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
+
+      assignments.flatMap(v => solutionToCounterExample(scrutVar)(v))
+    }
+
+    // return constructor call when the model is a true counter example
+    // (the variables don't take into account type information derived from other variables,
+    //  so, naively, you might try to construct a counter example like _ :: Nil(_ :: _, _ :: _),
+    //  since we didn't realize the tail of the outer cons was a Nil)
+//    def solutionToCounterExample(scrutVar: Var)(solution: Solution): Option[CounterExample] = {
+    def solutionToCounterExample(scrutVar: Var)(varAssignment: Map[Var, (Seq[Const], Seq[Const])]): Option[CounterExample] = {
+      // x1 = ...
+      // x1.hd = ...
+      // x1.tl = ...
+      // x1.hd.hd = ...
+      // ...
+//      import solution.model
+//      val varAssignment: Map[Var, (Seq[Const], Seq[Const])] = modelToVarAssignment(model)
+//
+//      val both: Map[Var, Const] = solution.unassigned.map(s => s.variable -> s.const).toMap
+//      if(both.nonEmpty) {
+//        println("stop")
+//      }
+
+//      debug.patmat("var assignment for model "+ model +":\n"+ varAssignmentString(varAssignment))
+
+      // chop a path into a list of symbols
+      def chop(path: Tree): List[Symbol] = path match {
+        case Ident(_) => List(path.symbol)
+        case Select(pre, name) => chop(pre) :+ path.symbol
+        case _ =>
+          // debug.patmat("don't know how to chop "+ path)
+          Nil
+      }
+
+      // turn the variable assignments into a tree
+      // the root is the scrutinee (x1), edges are labelled by the fields that are assigned
+      // a node is a variable example (which is later turned into a counter example)
+      object VariableAssignment {
+        private def findVar(path: List[Symbol]) = path match {
+          case List(root) if root == scrutVar.path.symbol => Some(scrutVar)
+          case _ => varAssignment.find{case (v, a) => chop(v.path) == path}.map(_._1)
+        }
+
+        private val uniques = new mutable.HashMap[Var, VariableAssignment]
+        private def unique(variable: Var): VariableAssignment =
+          uniques.getOrElseUpdate(variable, {
+            val (eqTo, neqTo) = varAssignment.getOrElse(variable, (Nil, Nil)) // TODO
+            VariableAssignment(variable, eqTo.toList, neqTo.toList, None /*both.get(variable)*/)
+          })
+
+        def apply(variable: Var): VariableAssignment = {
+          val path  = chop(variable.path)
+          val pre   = path.init
+          val field = path.last
+
+          val newCtor = unique(variable)
+
+          if (pre.isEmpty) newCtor
+          else {
+            findVar(pre) foreach { preVar =>
+              val outerCtor = this(preVar)
+              outerCtor.addField(field, newCtor)
+            }
+            newCtor
+          }
+        }
+      }
+
+      // node in the tree that describes how to construct a counter-example
+      case class VariableAssignment(variable: Var,
+                                    equalTo0: List[Const],
+                                    notEqualTo: List[Const],
+                                    maybeEqualTo: Option[Const]) {
+        private val fields: mutable.Map[Symbol, VariableAssignment] = mutable.HashMap.empty
+        private lazy val equalTo = maybeEqualTo.toList ::: equalTo0
+        // need to prune since the model now incorporates all super types of a constant (needed for reachability)
+        private lazy val uniqueEqualTo = equalTo filterNot (subsumed => equalTo.exists(better => (better ne subsumed) && instanceOfTpImplies(better.tp, subsumed.tp)))
+        private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
+        private lazy val prunedEqualTo = uniqueEqualTo filterNot (subsumed => variable.staticTpCheckable <:< subsumed.tp)
+        private lazy val ctor       = (prunedEqualTo match { case List(TypeConst(tp)) => tp case _ => variable.staticTpCheckable }).typeSymbol.primaryConstructor
+        private lazy val ctorParams = if (ctor.paramss.isEmpty) Nil else ctor.paramss.head
+        private lazy val cls        = ctor.safeOwner
+        private lazy val caseFieldAccs = cls.caseFieldAccessors
+
+        def addField(symbol: Symbol, assign: VariableAssignment) {
+          // SI-7669 Only register this field if if this class contains it.
+          val shouldConstrainField = !symbol.isCaseAccessor || caseFieldAccs.contains(symbol)
+          if (shouldConstrainField) fields(symbol) = assign
+        }
+
+        def allFieldAssignmentsLegal: Boolean =
+          (fields.keySet subsetOf caseFieldAccs.toSet) && fields.values.forall(_.allFieldAssignmentsLegal)
+
+        private lazy val nonTrivialNonEqualTo = notEqualTo.filterNot{c => c.isAny }
+
+        // NoExample if the constructor call is ill-typed
+        // (thus statically impossible -- can we incorporate this into the formula?)
+        // beBrief is used to suppress negative information nested in tuples -- it tends to get too noisy
+        def toCounterExample(beBrief: Boolean = false): Option[CounterExample] =
+          if (!allFieldAssignmentsLegal) Some(NoExample)
+          else {
+            debug.patmat("describing "+ ((variable, equalTo, notEqualTo, fields, cls, allFieldAssignmentsLegal)))
+            val res = prunedEqualTo match {
+              // a definite assignment to a value
+              case List(eq: ValueConst) if fields.isEmpty => Some(ValueExample(eq))
+
+              // constructor call
+              // or we did not gather any information about equality but we have information about the fields
+              //  --> typical example is when the scrutinee is a tuple and all the cases first unwrap that tuple and only then test something interesting
+              case _ if cls != NoSymbol && !isPrimitiveValueClass(cls) &&
+                        (  uniqueEqualTo.nonEmpty
+                        || (fields.nonEmpty && prunedEqualTo.isEmpty && notEqualTo.isEmpty)) =>
+
+                def args(brevity: Boolean = beBrief) = {
+                  // figure out the constructor arguments from the field assignment
+                  val argLen = (caseFieldAccs.length min ctorParams.length)
+
+                  val examples = (0 until argLen).map(i => fields.get(caseFieldAccs(i)).map(_.toCounterExample(brevity)) getOrElse Some(WildcardExample)).toList
+                  sequence(examples)
+                }
+
+                cls match {
+                  case ConsClass                                =>
+                    args().map {
+                      case List(NoExample, l: ListExample) =>
+                        // special case for neg/t7020.scala:
+                        // if we find a counter example `??::*` we report `*::*` instead
+                        // since the `??` originates from uniqueEqualTo containing several instanced of the same type
+                        List(WildcardExample, l)
+                      case args                            => args
+                    }.map(ListExample)
+                  case _ if isTupleSymbol(cls)                  => args(brevity = true).map(TupleExample)
+                  case _ if cls.isSealed && cls.isAbstractClass =>
+                    // don't report sealed abstract classes, since
+                    // 1) they can't be instantiated
+                    // 2) we are already reporting any missing subclass (since we know the full domain)
+                    // (see patmatexhaust.scala)
+                    None
+                  case _                                        => args().map(ConstructorExample(cls, _))
+                }
+
+              // a definite assignment to a type
+              case List(eq) if fields.isEmpty => Some(TypeExample(eq))
+
+              // negative information
+              case Nil if nonTrivialNonEqualTo.nonEmpty =>
+                // negation tends to get pretty verbose
+                if (beBrief) Some(WildcardExample)
+                else {
+                  val eqTo = equalTo.headOption getOrElse TypeConst(variable.staticTpCheckable)
+                  Some(NegativeExample(eqTo, nonTrivialNonEqualTo))
+                }
+
+              // if uniqueEqualTo contains more than one symbol of the same domain
+              // then we can safely ignore these counter examples since we will eventually encounter
+              // both counter examples separately
+              case _ if inSameDomain => None
+
+              // not a valid counter-example, possibly since we have a definite type but there was a field mismatch
+              // TODO: improve reasoning -- in the mean time, a false negative is better than an annoying false positive
+              case _ => Some(NoExample)
+            }
+            debug.patmatResult("described as")(res)
+          }
+
+        override def toString = toCounterExample().toString
+      }
+
+      // slurp in information from other variables
+      varAssignment.keys.foreach{ v => if (v != scrutVar) VariableAssignment(v) }
+
+      // this is the variable we want a counter example for
+      val assignment: VariableAssignment = VariableAssignment(scrutVar)
+      assignment.toCounterExample()
     }
 
     def analyzeCases(prevBinder: Symbol, cases: List[List[TreeMaker]], pt: Type, suppression: Suppression): Unit = {
