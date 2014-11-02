@@ -6,9 +6,10 @@
 
 package scala.tools.nsc.transform.patmat
 
+import scala.annotation.tailrec
 import scala.collection.immutable.Iterable
 import scala.language.postfixOps
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 import scala.reflect.internal.util.Statistics
 
 trait TreeAndTypeAnalysis extends Debugging {
@@ -826,6 +827,64 @@ trait MatchAnalysis extends MatchApproximation {
 //            byDomains.fold[Grouping](ByType(s.const.tp))(ByDomain(_))
         }
 
+        //        val emptyTrues: Map[Var, (Seq[Const], Seq[Const])] = varAssignment.filter(_._2._1.isEmpty)
+        val emptyTrues: Seq[(Var, List[Sym])] = varAssignment.collect {
+          case (variable: Var, (Seq(), falses)) =>
+            val canBeEqualTo: List[Sym] = solution.unassigned.filter(sym => sym.variable == variable)
+            val notNegated = canBeEqualTo.filterNot(falses contains)
+            variable -> notNegated
+        }.toSeq
+
+        val unassigned: List[Sym] = solution.unassigned.filter(sym => emptyTrues contains sym.variable)
+
+        // TODO: rest of domain???
+
+        @tailrec
+        def setEmptyVars(varAssignments: List[Map[Var, (Seq[Const], Seq[Const])]],
+                         emptyVars: List[Var]): List[Map[Var, (Seq[Const], Seq[Const])]] = emptyVars match {
+          case Nil          => varAssignments
+          case variable :: tail =>
+            val canBeEqualTo: List[Sym] = solution.unassigned.filter(sym => sym.variable == variable)
+            val variableSetToTrue = canBeEqualTo.flatMap {
+              (sym: Sym) =>
+                varAssignments.filter {
+                  case (assign: Map[Var, (Seq[Const], Seq[Const])]) =>
+                    val (trues, falses) = assign(variable)
+
+                    assign + (variable ->(Seq(sym.const), falses))
+                }
+
+                varAssignments.map {
+                  (assign: Map[Var, (Seq[Const], Seq[Const])]) =>
+                    val (trues, falses) = assign(variable)
+
+                    assign + (variable ->(Seq(sym.const), falses))
+                }
+            }
+            setEmptyVars(variableSetToTrue, tail)
+        }
+
+        val fixed = setEmptyVars(List(varAssignment), emptyTrues.toList)
+
+        // TODO: outer loop...
+        val enhanced: Iterable[Seq[(Var, (Seq[Const], Seq[Const]))]] = varAssignment.map {
+          case (variable, (Seq(), falses)) =>
+            val canBeEqualTo: List[Sym] = solution.unassigned.filter(sym => sym.variable == variable)
+            canBeEqualTo.map(sym => variable -> (Seq(sym.const), falses))
+          case assign => Seq(assign)
+        }
+
+        val unassignedInDomain: Map[Grouping, List[Sym]] = grouped.mapValues {
+          syms: List[Sym] =>
+            syms.filterNot {
+              s => varAssignment.keySet.contains(s.variable)
+            }
+        }.filter(_._2.nonEmpty)
+
+        if(unassignedInDomain.nonEmpty) {
+          println("now scotty****")
+        }
+
         def addToVar(variable: Var, assign: Const): Seq[Map[Var, (Seq[Const], Seq[Const])]] = {
           varAssignment.get(variable) match {
             case Some((trues, falses)) =>
@@ -863,8 +922,8 @@ trait MatchAnalysis extends MatchApproximation {
           }
         }
 
-        def addToVarAllNeg(varAssignment: Map[Var, (Seq[Const], Seq[Const])],
-                           syms: Seq[Sym]): Map[Var, (Seq[Const], Seq[Const])] = {
+        def addToVarAllNeg(syms: Seq[Sym],
+                           varAssignment: Map[Var, (Seq[Const], Seq[Const])]): Map[Var, (Seq[Const], Seq[Const])] = {
 
           def addNeg(sym: Sym,
                      varAssignment: Map[Var, (Seq[Const], Seq[Const])]) = {
@@ -882,35 +941,27 @@ trait MatchAnalysis extends MatchApproximation {
 
         }
 
-        /* only one symbol per grouping can be enabled */
-        val more = grouped.flatMap {
+        /* only one symbol per grouping can be enabled
+        *  TODO: if a symbol of the grouping is set: set all others to false
+        *  if none do one-hot list of all symbols of group (can that ever happen???) */
+        val more: IndexedSeq[Map[Var, (Seq[Const], Seq[Const])]] = grouped.map {
           case (byType: ByType, syms: List[Sym]) =>
-            for {
-              sym <- syms
-            } yield {
-              addToVar0(sym, grouped.values.flatten.toIndexedSeq.filterNot(_ == sym))
-            }
+//            addToVarAllNeg(syms, varAssignment)
+            println("unassigned " + solution.unassigned)
+            println("bytype " +syms)
+            varAssignment
           case (byDomain: ByDomain, syms: List[Sym]) =>
-            for {
-              sym <- syms
-            } yield {
-              addToVar0(sym, syms.filterNot(_ == sym))
-            }
-        }.toIndexedSeq ++         grouped.flatMap {
-                  case (byType: ByType, syms: List[Sym]) =>
-                    for {
-                      sym <- syms
-                    } yield {
-                      addToVar0(sym, grouped.values.flatten.toIndexedSeq.filterNot(_ == sym))
-                    }
-                  case (byDomain: ByDomain, syms: List[Sym]) =>
-                    for {
-                      sym <- syms
-                    } yield {
-                      addToVarNeg0(sym, syms.filterNot(_ == sym))
-                    }
-                }.toIndexedSeq
-         more.toList
+            println("unassigned " + solution.unassigned)
+            println("domain " + syms)
+            //            addToVarAllNeg(syms, varAssignment)
+            varAssignment
+        }.toIndexedSeq
+
+        more.toList
+
+        List(addToVarAllNeg(solution.unassigned, varAssignment))
+
+        fixed
       }
 
 //      val byDomains: Map[Option[Set[Type]], List[Sym]] = solution.unassigned.groupBy {
@@ -928,7 +979,7 @@ trait MatchAnalysis extends MatchApproximation {
 
       //      uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
 
-      println(varAssignment)
+//      println(varAssignment)
 
       assignments.flatMap(v => solutionToCounterExample(scrutVar)(v))
     }
