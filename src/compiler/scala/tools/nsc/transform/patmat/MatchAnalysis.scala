@@ -772,7 +772,10 @@ trait MatchAnalysis extends MatchApproximation {
       }
 
       // slurp in information from other variables
-      varAssignment.keys.foreach{ v => if (v != scrutVar) VariableAssignment(v) }
+      varAssignment.keys.foreach {
+        v =>
+          if (v != scrutVar) VariableAssignment(v)
+      }
 
       // this is the variable we want a counter example for
       VariableAssignment(scrutVar).toCounterExample()
@@ -811,6 +814,13 @@ trait MatchAnalysis extends MatchApproximation {
 //            byDomains.fold[Grouping](ByType(s.const.tp))(ByDomain(_))
         }
 
+        def domainFor(s: Sym): Grouping = {
+          val byDomains: Option[Set[Type]] = s.variable.domainSyms.map(_.map(_.const.tp))
+          val a: Option[ByDomain] = byDomains.map(ByDomain(_))
+          val b = ByType(s.const.tp)
+          a.getOrElse(b)
+        }
+
         //        val emptyTrues: Map[Var, (Seq[Const], Seq[Const])] = varAssignment.filter(_._2._1.isEmpty)
         val emptyTrues: Seq[(Var, List[Sym])] = varAssignment.collect {
           case (variable: Var, (Seq(), falses)) =>
@@ -834,6 +844,8 @@ trait MatchAnalysis extends MatchApproximation {
           case (variable, canBeEqualTo) :: tail =>
             val variableSetToTrue = canBeEqualTo.flatMap {
               (sym: Sym) =>
+                val domain = domainFor(sym)
+
                 varAssignments.map {
                   case (assign: Map[Var, (Seq[Const], Seq[Const])]) =>
                     val (trues, falses) = assign(variable)
