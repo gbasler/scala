@@ -645,7 +645,7 @@ trait MatchAnalysis extends MatchApproximation {
         private def unique(variable: Var): VariableAssignment =
           uniques.getOrElseUpdate(variable, {
             val (eqTo, neqTo) = varAssignment.getOrElse(variable, (Nil, Nil)) // TODO
-            new VariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const))
+            new VariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const), Map())
           })
 
         def apply(variable: Var): VariableAssignment = {
@@ -657,9 +657,18 @@ trait MatchAnalysis extends MatchApproximation {
 
           if (pre.isEmpty) newCtor
           else {
+            val fields: mutable.Map[Symbol, VariableAssignment] = mutable.HashMap.empty
+
             findVar(pre) foreach { preVar =>
               val outerCtor: VariableAssignment = apply(preVar)
-              outerCtor.addField(field, newCtor)
+
+              def addField(symbol: Symbol, assign: VariableAssignment) {
+                // SI-7669 Only register this field if if this class contains it.
+                val shouldConstrainField = !symbol.isCaseAccessor || outerCtor.caseFieldAccs.contains(symbol)
+                if (shouldConstrainField) fields(symbol) = assign
+              }
+
+              addField(field, newCtor)
             }
             newCtor
           }
@@ -676,8 +685,10 @@ trait MatchAnalysis extends MatchApproximation {
     }
 
     // node in the tree that describes how to construct a counter-example
-    case class VariableAssignment(variable: Var, equalTo: List[Const], notEqualTo: List[Const], maybe: List[Const]) {
-      private val fields: mutable.Map[Symbol, VariableAssignment] = mutable.HashMap.empty
+    case class VariableAssignment(variable: Var,
+                                  equalTo: List[Const],
+                                  notEqualTo: List[Const],
+                                  maybe: List[Const]) {
       // need to prune since the model now incorporates all super types of a constant (needed for reachability)
       private lazy val uniqueEqualTo = equalTo filterNot (subsumed => equalTo.exists(better => (better ne subsumed) && instanceOfTpImplies(better.tp, subsumed.tp)))
       private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
@@ -688,13 +699,7 @@ trait MatchAnalysis extends MatchApproximation {
       }).typeSymbol.primaryConstructor
       private lazy val ctorParams = if (ctor.paramss.isEmpty) Nil else ctor.paramss.head
       private lazy val cls = ctor.safeOwner
-      private lazy val caseFieldAccs: List[Symbol] = cls.caseFieldAccessors
-
-      def addField(symbol: Symbol, assign: VariableAssignment) {
-        // SI-7669 Only register this field if if this class contains it.
-        val shouldConstrainField = !symbol.isCaseAccessor || caseFieldAccs.contains(symbol)
-        if (shouldConstrainField) fields(symbol) = assign
-      }
+      lazy val caseFieldAccs: List[Symbol] = cls.caseFieldAccessors
 
       private def allFieldAssignmentsLegal: Boolean =
         (fields.keySet subsetOf caseFieldAccs.toSet) && fields.values.forall(_.allFieldAssignmentsLegal)
@@ -704,7 +709,8 @@ trait MatchAnalysis extends MatchApproximation {
       // NoExample if the constructor call is ill-typed
       // (thus statically impossible -- can we incorporate this into the formula?)
       // beBrief is used to suppress negative information nested in tuples -- it tends to get too noisy
-      def toCounterExample(beBrief: Boolean = false): Option[CounterExample] =
+      def toCounterExample(fields: Map[Symbol, VariableAssignment],
+                           beBrief: Boolean = false): Option[CounterExample] =
         if (!allFieldAssignmentsLegal) Some(NoExample)
         else {
           debug.patmat("describing " + ((variable, equalTo, notEqualTo, fields, cls, allFieldAssignmentsLegal)))
