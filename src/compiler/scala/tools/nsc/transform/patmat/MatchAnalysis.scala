@@ -648,6 +648,12 @@ trait MatchAnalysis extends MatchApproximation {
             new VariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const), Map())
           })
 
+        private val fields = new mutable.HashMap[VariableAssignment, mutable.Map[Symbol, VariableAssignment]]
+        private def field(assign: VariableAssignment): mutable.Map[Symbol, VariableAssignment] =
+          fields.getOrElseUpdate(assign, {
+            mutable.HashMap.empty
+          })
+
         def apply(variable: Var): VariableAssignment = {
           val path  = chop(variable.path)
           val pre   = path.init
@@ -657,7 +663,7 @@ trait MatchAnalysis extends MatchApproximation {
 
           if (pre.isEmpty) newCtor
           else {
-            val fields: mutable.Map[Symbol, VariableAssignment] = mutable.HashMap.empty
+            val fields: mutable.Map[Symbol, VariableAssignment] = field(newCtor)
 
             findVar(pre) foreach { preVar =>
               val outerCtor: VariableAssignment = apply(preVar)
@@ -681,7 +687,55 @@ trait MatchAnalysis extends MatchApproximation {
       }
 
       // this is the variable we want a counter example for
-      VariableAssignment(scrutVar)
+      val assign = VariableAssignment(scrutVar)
+
+      // set unexpanded variables
+      def setUnexpanded(assign: VariableAssignment) = {
+        if (assign.equalTo.isEmpty) {
+          sealed abstract class Grouping
+
+          /* e.g., Scala ADT's (sealed types) */
+          case class ByDomain(domain: Set[Type]) extends Grouping
+
+          /* e.g. ints or Java types? */
+          case class ByType(domain: Type) extends Grouping
+
+          val grouped: Map[Grouping, List[Sym]] = solution.unassigned.groupBy {
+            (s: Sym) =>
+              val byDomains: Option[Set[Type]] = s.variable.domainSyms.map(_.map(_.const.tp))
+              val a: Option[ByDomain] = byDomains.map(ByDomain(_))
+              val b = ByType(s.const.tp)
+              a.getOrElse(b)
+            //            byDomains.fold[Grouping](ByType(s.const.tp))(ByDomain(_))
+          }
+
+          def domainFor(s: Sym): Grouping = {
+            val byDomains: Option[Set[Type]] = s.variable.domainSyms.map(_.map(_.const.tp))
+            val a: Option[ByDomain] = byDomains.map(ByDomain(_))
+            val b = ByType(s.const.tp)
+            a.getOrElse(b)
+          }
+
+          //        val emptyTrues: Map[Var, (Seq[Const], Seq[Const])] = varAssignment.filter(_._2._1.isEmpty)
+          val emptyTrues: Seq[(Var, List[Sym])] = assign.collect {
+            case (variable: Var, (Seq(), falses)) =>
+              val canBeEqualTo: List[Sym] = solution.unassigned.filter(sym => sym.variable == variable)
+              val notNegated = canBeEqualTo.filterNot(falses contains)
+              variable -> notNegated
+          }.toSeq
+
+          val emptyTrues0: Seq[(Var, List[Sym])] = emptyTrues.filter(_._2.nonEmpty)
+
+          val unassigned: List[Sym] = solution.unassigned.filter(sym => emptyTrues contains sym.variable)
+
+          // pseudo code
+          // foreach: one-hot setting of unassigned vars
+          // recurse into fields!
+        }
+        // TODO: else case? set remaining to false?
+      }
+
+      assign
     }
 
     // node in the tree that describes how to construct a counter-example
