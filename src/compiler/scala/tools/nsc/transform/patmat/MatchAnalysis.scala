@@ -648,12 +648,6 @@ trait MatchAnalysis extends MatchApproximation {
             new VariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const), Map())
           })
 
-        private val fields = new mutable.HashMap[VariableAssignment, mutable.Map[Symbol, VariableAssignment]]
-        private def field(assign: VariableAssignment): mutable.Map[Symbol, VariableAssignment] =
-          fields.getOrElseUpdate(assign, {
-            mutable.HashMap.empty
-          })
-
         def apply(variable: Var): VariableAssignment = {
           val path  = chop(variable.path)
           val pre   = path.init
@@ -663,18 +657,9 @@ trait MatchAnalysis extends MatchApproximation {
 
           if (pre.isEmpty) newCtor
           else {
-            val fields: mutable.Map[Symbol, VariableAssignment] = field(newCtor)
-
             findVar(pre) foreach { preVar =>
-              val outerCtor: VariableAssignment = apply(preVar)
-
-              def addField(symbol: Symbol, assign: VariableAssignment) {
-                // SI-7669 Only register this field if if this class contains it.
-                val shouldConstrainField = !symbol.isCaseAccessor || outerCtor.caseFieldAccs.contains(symbol)
-                if (shouldConstrainField) fields(symbol) = assign
-              }
-
-              addField(field, newCtor)
+              val outerCtor = this(preVar)
+              outerCtor.addField(field, newCtor)
             }
             newCtor
           }
@@ -770,8 +755,31 @@ trait MatchAnalysis extends MatchApproximation {
     case class PreVariableAssignment(variable: Var,
                                      equalTo: List[Const],
                                      notEqualTo: List[Const],
-                                     maybe: List[Const])
+                                     maybe: List[Const]) {
 
+      private lazy val uniqueEqualTo = equalTo filterNot (subsumed => equalTo.exists(better => (better ne subsumed) && instanceOfTpImplies(better.tp, subsumed.tp)))
+      private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
+      private lazy val prunedEqualTo = uniqueEqualTo filterNot (subsumed => variable.staticTpCheckable <:< subsumed.tp)
+      private lazy val ctor = (prunedEqualTo match {
+        case List(TypeConst(tp)) => tp
+        case _ => variable.staticTpCheckable
+      }).typeSymbol.primaryConstructor
+      private lazy val ctorParams = if (ctor.paramss.isEmpty) Nil else ctor.paramss.head
+      private lazy val cls = ctor.safeOwner
+      lazy val caseFieldAccs: List[Symbol] = cls.caseFieldAccessors
+
+      private val fields: mutable.Map[Symbol, PreVariableAssignment] = mutable.HashMap.empty
+
+      private def allFieldAssignmentsLegal: Boolean =
+        (fields.keySet subsetOf caseFieldAccs.toSet) && fields.values.forall(_.allFieldAssignmentsLegal)
+
+      def addField(symbol: Symbol, assign: PreVariableAssignment) {
+        // SI-7669 Only register this field if if this class contains it.
+        val shouldConstrainField = !symbol.isCaseAccessor || caseFieldAccs.contains(symbol)
+        if (shouldConstrainField) fields(symbol) = assign
+      }
+
+    }
 
     // node in the tree that describes how to construct a counter-example
     case class VariableAssignment(variable: Var,
