@@ -731,18 +731,54 @@ trait MatchAnalysis extends MatchApproximation {
           // pseudo code
           // foreach: one-hot setting of unassigned vars
           // recurse into fields!
-        }
+
+//          varAssignment.get(variable) match {
+//            case Some((trues, falses)) =>
+//              List(varAssignment - variable + (variable ->(trues :+ assign, falses)), varAssignment - variable + (variable ->(trues, falses :+ assign)))
+//            case None                  =>
+//              List(varAssignment + (variable ->(Seq(assign), Seq())), varAssignment + (variable ->(Seq(), Seq(assign))))
+//          }
+
+          val assigns = for {
+            s <- unassigned
+          } yield {
+            val a = assign
+            val equalTo0 =  s :: a.equalTo
+            val notEqualTo0 =  unassigned.filterNot(_ == s) ::: a.notEqualTo
+            a.copy(equalTo = equalTo0, notEqualTo = notEqualTo0)
+          }
+
+          // expand inner
+          val expanded = for {
+            a <- assigns
+          } yield {
+            val field = fields(a)
+          }
+
+        } else {
         // TODO: else case? set remaining to false?
+          assign
+        }
       }
 
-      assign
+      // go over non-set variables and set them
+
+
+      setUnexpanded(assign)
     }
+
+    case class PreVariableAssignment(variable: Var,
+                                     equalTo: List[Const],
+                                     notEqualTo: List[Const],
+                                     maybe: List[Const])
+
 
     // node in the tree that describes how to construct a counter-example
     case class VariableAssignment(variable: Var,
                                   equalTo: List[Const],
                                   notEqualTo: List[Const],
-                                  maybe: List[Const]) {
+                                  maybe: List[Const]
+                                  /*fields: Map[Symbol, VariableAssignment]*/) {
       // need to prune since the model now incorporates all super types of a constant (needed for reachability)
       private lazy val uniqueEqualTo = equalTo filterNot (subsumed => equalTo.exists(better => (better ne subsumed) && instanceOfTpImplies(better.tp, subsumed.tp)))
       private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
