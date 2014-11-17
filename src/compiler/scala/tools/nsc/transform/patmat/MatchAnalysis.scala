@@ -635,20 +635,20 @@ trait MatchAnalysis extends MatchApproximation {
       // turn the variable assignments into a tree
       // the root is the scrutinee (x1), edges are labelled by the fields that are assigned
       // a node is a variable example (which is later turned into a counter example)
-      object VariableAssignment {
+      object PreVariableAssignment {
         private def findVar(path: List[Symbol]) = path match {
           case List(root) if root == scrutVar.path.symbol => Some(scrutVar)
           case _ => varAssignment.find{case (v, a) => chop(v.path) == path}.map(_._1)
         }
 
-        private val uniques = new mutable.HashMap[Var, VariableAssignment]
-        private def unique(variable: Var): VariableAssignment =
+        private val uniques = new mutable.HashMap[Var, PreVariableAssignment]
+        private def unique(variable: Var): PreVariableAssignment =
           uniques.getOrElseUpdate(variable, {
             val (eqTo, neqTo) = varAssignment.getOrElse(variable, (Nil, Nil)) // TODO
-            new VariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const), Map())
+            new PreVariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const), Map())
           })
 
-        def apply(variable: Var): VariableAssignment = {
+        def apply(variable: Var): PreVariableAssignment = {
           val path  = chop(variable.path)
           val pre   = path.init
           val field = path.last
@@ -658,7 +658,7 @@ trait MatchAnalysis extends MatchApproximation {
           if (pre.isEmpty) newCtor
           else {
             findVar(pre) foreach { preVar =>
-              val outerCtor = this(preVar)
+              val outerCtor = apply(preVar)
               outerCtor.addField(field, newCtor)
             }
             newCtor
@@ -668,14 +668,14 @@ trait MatchAnalysis extends MatchApproximation {
 
       // slurp in information from other variables
       varAssignment.keys.foreach {
-        v => if (v != scrutVar) VariableAssignment(v)
+        v => if (v != scrutVar) PreVariableAssignment(v)
       }
 
       // this is the variable we want a counter example for
-      val assign = VariableAssignment(scrutVar)
+      val assign = PreVariableAssignment(scrutVar)
 
       // set unexpanded variables
-      def setUnexpanded(assign: VariableAssignment) = {
+      def setUnexpanded(assign: PreVariableAssignment): Seq[VariableAssignment] = {
         if (assign.equalTo.isEmpty) {
           sealed abstract class Grouping
 
@@ -717,17 +717,11 @@ trait MatchAnalysis extends MatchApproximation {
           // foreach: one-hot setting of unassigned vars
           // recurse into fields!
 
-//          varAssignment.get(variable) match {
-//            case Some((trues, falses)) =>
-//              List(varAssignment - variable + (variable ->(trues :+ assign, falses)), varAssignment - variable + (variable ->(trues, falses :+ assign)))
-//            case None                  =>
-//              List(varAssignment + (variable ->(Seq(assign), Seq())), varAssignment + (variable ->(Seq(), Seq(assign))))
-//          }
-
-          val assigns = for {
+          val assigns: List[PreVariableAssignment] = for {
             s <- unassigned
           } yield {
             val a = assign
+            // one hot
             val equalTo0 =  s :: a.equalTo
             val notEqualTo0 =  unassigned.filterNot(_ == s) ::: a.notEqualTo
             a.copy(equalTo = equalTo0, notEqualTo = notEqualTo0)
@@ -737,12 +731,18 @@ trait MatchAnalysis extends MatchApproximation {
           val expanded = for {
             a <- assigns
           } yield {
-            val field = fields(a)
+            val inners: Seq[Seq[VariableAssignment]] = for {
+              (sym, assign) <- a.fields
+            } yield {
+              setUnexpanded(assign)
+            }
+
+
           }
 
         } else {
         // TODO: else case? set remaining to false?
-          assign
+          VariableAssignment(assign.variable, assign.equalTo, assign.notEqualTo, assign.fields.toMap)
         }
       }
 
@@ -751,6 +751,11 @@ trait MatchAnalysis extends MatchApproximation {
 
       setUnexpanded(assign)
     }
+
+    // thoughts:
+    // fields is not changing during expansion, so could be constant or global but must be copied if field of case class!
+    // problem if fields is global: fields: Map[Symbol, VariableAssignment] values should be Var, so we can go to VariableAssignment
+
 
     case class PreVariableAssignment(variable: Var,
                                      equalTo: List[Const],
@@ -768,7 +773,7 @@ trait MatchAnalysis extends MatchApproximation {
       private lazy val cls = ctor.safeOwner
       lazy val caseFieldAccs: List[Symbol] = cls.caseFieldAccessors
 
-      private val fields: mutable.Map[Symbol, PreVariableAssignment] = mutable.HashMap.empty
+      val fields: mutable.Map[Symbol, PreVariableAssignment] = mutable.HashMap.empty
 
       private def allFieldAssignmentsLegal: Boolean =
         (fields.keySet subsetOf caseFieldAccs.toSet) && fields.values.forall(_.allFieldAssignmentsLegal)
@@ -782,11 +787,10 @@ trait MatchAnalysis extends MatchApproximation {
     }
 
     // node in the tree that describes how to construct a counter-example
-    case class VariableAssignment(variable: Var,
+    case class VariableAssignment(variable: Var, // key!
                                   equalTo: List[Const],
                                   notEqualTo: List[Const],
-                                  maybe: List[Const]
-                                  /*fields: Map[Symbol, VariableAssignment]*/) {
+                                  fields: Map[Symbol, VariableAssignment]) {
       // need to prune since the model now incorporates all super types of a constant (needed for reachability)
       private lazy val uniqueEqualTo = equalTo filterNot (subsumed => equalTo.exists(better => (better ne subsumed) && instanceOfTpImplies(better.tp, subsumed.tp)))
       private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
