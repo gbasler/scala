@@ -618,10 +618,10 @@ trait MatchAnalysis extends MatchApproximation {
          v +"(="+ v.path +": "+ v.staticTpCheckable +") "+ assignment
        }.mkString("\n")
 
-    def createVarAssigns(scrutVar: Var, solution: Solution): VariableAssignment = {
+    def createVarAssigns(scrutVar: Var, solution: Solution): Seq[VariableAssignment] = {
 
       val model = solution.model
-      val varAssignment = modelToVarAssignment(model)
+      val varAssignment: Map[Var, (Seq[Const], Seq[Const])] = modelToVarAssignment(model)
 
        // chop a path into a list of symbols
       def chop(path: Tree): List[Symbol] = path match {
@@ -645,7 +645,7 @@ trait MatchAnalysis extends MatchApproximation {
         private def unique(variable: Var): PreVariableAssignment =
           uniques.getOrElseUpdate(variable, {
             val (eqTo, neqTo) = varAssignment.getOrElse(variable, (Nil, Nil)) // TODO
-            new PreVariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const), Map())
+            new PreVariableAssignment(variable, eqTo.toList, neqTo.toList, solution.unassigned.map(_.const))
           })
 
         def apply(variable: Var): PreVariableAssignment = {
@@ -676,6 +676,9 @@ trait MatchAnalysis extends MatchApproximation {
 
       // set unexpanded variables
       def setUnexpanded(assign: PreVariableAssignment): Seq[VariableAssignment] = {
+
+        println("maybe: " + assign.maybe)
+
         if (assign.equalTo.isEmpty) {
           sealed abstract class Grouping
 
@@ -701,48 +704,89 @@ trait MatchAnalysis extends MatchApproximation {
             a.getOrElse(b)
           }
 
-          //        val emptyTrues: Map[Var, (Seq[Const], Seq[Const])] = varAssignment.filter(_._2._1.isEmpty)
-          val emptyTrues: Seq[(Var, List[Sym])] = assign.collect {
-            case (variable: Var, (Seq(), falses)) =>
-              val canBeEqualTo: List[Sym] = solution.unassigned.filter(sym => sym.variable == variable)
-              val notNegated = canBeEqualTo.filterNot(falses contains)
-              variable -> notNegated
-          }.toSeq
+//          val emptyTrues: Seq[(Var, List[Sym])] = assign.maybe {
+//            case (variable: Var, (Seq(), falses)) =>
+//              val canBeEqualTo: List[Sym] = solution.unassigned.filter(sym => sym.variable == variable)
+//              val notNegated = canBeEqualTo.filterNot(falses contains)
+//              variable -> notNegated
+//          }.toSeq
+//
+//          val emptyTrues0: Seq[(Var, List[Sym])] = emptyTrues.filter(_._2.nonEmpty)
+//
+//          val unassigned: List[Sym] = solution.unassigned.filter(sym => emptyTrues contains sym.variable)
 
-          val emptyTrues0: Seq[(Var, List[Sym])] = emptyTrues.filter(_._2.nonEmpty)
+          // find domains that have no representatives set
+          // then get a list of variables in these domains
 
-          val unassigned: List[Sym] = solution.unassigned.filter(sym => emptyTrues contains sym.variable)
 
           // pseudo code
           // foreach: one-hot setting of unassigned vars
           // recurse into fields!
 
-          val assigns: List[PreVariableAssignment] = for {
-            s <- unassigned
-          } yield {
-            val a = assign
-            // one hot
-            val equalTo0 =  s :: a.equalTo
-            val notEqualTo0 =  unassigned.filterNot(_ == s) ::: a.notEqualTo
-            a.copy(equalTo = equalTo0, notEqualTo = notEqualTo0)
-          }
+          // TODO: correct expansion
+          // expands by group all
+          // unassigned variables
 
-          // expand inner
-          val expanded = for {
-            a <- assigns
-          } yield {
-            val inners: Seq[Seq[VariableAssignment]] = for {
-              (sym, assign) <- a.fields
+          if(assign.maybe.isEmpty) {
+            val inners = for {
+              (sym, assign) <- assign.fields
             } yield {
-              setUnexpanded(assign)
+              // TODO: need to take cartesian product
+              sym -> setUnexpanded(assign).head
+            }
+            Seq(VariableAssignment(assign.variable, assign.equalTo, assign.notEqualTo, inners.toMap))
+          } else {
+                               // but for now we assume only one group
+          val assigns: List[VariableAssignment] = for {
+            s <- assign.maybe
+          } yield {
+            // one hot
+            val equalTo0 =  s :: assign.equalTo
+            val notEqualTo0 =  assign.maybe.filterNot(_ == s) ::: assign.notEqualTo
+
+            val inners = for {
+              (sym, assign) <- assign.fields
+            } yield {
+              // TODO: need to take cartesian product
+              val unexpanded: Seq[VariableAssignment] = setUnexpanded(assign)
+              require(unexpanded.size == 1)
+              sym -> unexpanded.head
             }
 
+            // combine into final assignments
+            VariableAssignment(assign.variable, equalTo0, notEqualTo0, inners.toMap)
+          }
 
+
+//          // expand inner
+//          val expanded = for {
+//            a <- assigns
+//          } yield {
+//            val inners: Seq[Seq[VariableAssignment]] = for {
+//              (sym, assign) <- a.fields
+//            } yield {
+//              setUnexpanded(assign)
+//            }
+//          }
+
+          // combine into final assignments
+            assigns
           }
 
         } else {
-        // TODO: else case? set remaining to false?
-          VariableAssignment(assign.variable, assign.equalTo, assign.notEqualTo, assign.fields.toMap)
+          // TODO: else case? set remaining to false?
+          val inners = for {
+            (sym, assign) <- assign.fields
+          } yield {
+            // TODO: need to take cartesian product
+            val unexpanded: Seq[VariableAssignment] = setUnexpanded(assign)
+            if (unexpanded.size != 1) {
+              println("unexpanded: " + unexpanded)
+            }
+            sym -> unexpanded.head
+          }
+
+          Seq(VariableAssignment(assign.variable, assign.equalTo, assign.notEqualTo, inners.toMap))
         }
       }
 
@@ -811,8 +855,7 @@ trait MatchAnalysis extends MatchApproximation {
       // NoExample if the constructor call is ill-typed
       // (thus statically impossible -- can we incorporate this into the formula?)
       // beBrief is used to suppress negative information nested in tuples -- it tends to get too noisy
-      def toCounterExample(fields: Map[Symbol, VariableAssignment],
-                           beBrief: Boolean = false): Option[CounterExample] =
+      def toCounterExample(beBrief: Boolean = false): Option[CounterExample] =
         if (!allFieldAssignmentsLegal) Some(NoExample)
         else {
           debug.patmat("describing " + ((variable, equalTo, notEqualTo, fields, cls, allFieldAssignmentsLegal)))
@@ -887,7 +930,7 @@ trait MatchAnalysis extends MatchApproximation {
     // (the variables don't take into account type information derived from other variables,
     //  so, naively, you might try to construct a counter example like _ :: Nil(_ :: _, _ :: _),
     //  since we didn't realize the tail of the outer cons was a Nil)
-    def modelToCounterExample(scrutVar: Var)(solution: Solution): Option[CounterExample] = {
+    def modelToCounterExample(scrutVar: Var)(solution: Solution): Seq[CounterExample] = {
       // x1 = ...
       // x1.hd = ...
       // x1.tl = ...
@@ -896,7 +939,7 @@ trait MatchAnalysis extends MatchApproximation {
       val assign = createVarAssigns(scrutVar, solution)
 
       // this is the variable we want a counter example for
-      assign.toCounterExample()
+      assign.flatMap(_.toCounterExample(false))
     }
 
     def solutionToCounterExample(scrutVar: Var)(solution: Solution): List[CounterExample] = {
