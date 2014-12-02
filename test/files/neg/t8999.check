@@ -1,0 +1,10 @@
+t8999.scala:218: warning: (Exhaustivity analysis reached max recursion depth, not all missing cases are reported. Please try with scalac -Ypatmat-exhaust-depth 40 or -Ypatmat-exhaust-depth off.)
+  private def transform(tree: Tree) = {
+              ^
+t8999.scala:220: warning: match may not be exhaustive.
+It would fail on the following inputs: CallHelper(_, _), ConstructorExportDef(_, _, _), MethodDef(_, _, _, _), ModuleExportDef(_), PropertyDef(_, _, _, _)
+    tree match {
+    ^
+error: No warnings can be incurred under -Xfatal-warnings.
+two warnings found
+one error found
