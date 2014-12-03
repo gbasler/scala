@@ -2,7 +2,7 @@ t8999.scala:218: warning: (Exhaustivity analysis reached max recursion depth, no
   private def transform(tree: Tree) = {
               ^
 t8999.scala:220: warning: match may not be exhaustive.
-It would fail on the following inputs: CallHelper(_, _), ConstructorExportDef(_, _, _), MethodDef(_, _, _, _), ModuleExportDef(_), PropertyDef(_, _, _, _)
+It would fail on the following inputs: ClassDef(_, _, _, _, _), ConstructorExportDef(_, _, _), ModuleExportDef(_), ParamDef(_, _, _)
     tree match {
     ^
 error: No warnings can be incurred under -Xfatal-warnings.
