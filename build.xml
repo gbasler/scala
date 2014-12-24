@@ -1474,7 +1474,7 @@ TODO:
     <echo message="Note: details of failed tests will be output to ${build-junit.dir}"/>
 
     <if><isset property="test.method" /><then><property name="test.methods" value="${test.method}" /></then></if>
-    <junit fork="yes" haltonfailure="yes" printsummary="on">
+    <junit fork="yes" haltonfailure="yes" printsummary="withOutAndErr">
       <classpath refid="test.junit.compiler.build.path"/>
       <test fork="yes" todir="${build-junit.dir}" if="test.class" unless="test.methods" name="${test.class}" />
       <test fork="yes" todir="${build-junit.dir}" if="test.methods" name="${test.class}" methods="${test.methods}" />
@@ -1483,7 +1483,7 @@ TODO:
           <include name="**/*Test.class"/>
         </fileset>
       </batchtest>
-      <formatter type="plain"/>
+      <formatter type="plain" usefile="false"/>
     </junit>
     <stopwatch name="test.junit.timer" action="total"/>
   </target>
