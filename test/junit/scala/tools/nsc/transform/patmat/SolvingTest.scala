@@ -242,6 +242,25 @@ class SolvingTest {
   }
 
   @Test
+  def testTseitinVsShannon() {
+    val pSym = Sym(Var(Tree("p")), NullConst)
+    val qSym = Sym(Var(Tree("q")), NullConst)
+    val f1 = And(pSym, Not(qSym))
+    val f2 = And(Not(pSym), qSym)
+    val f = Or(f1, f2)
+    val s1 = propToSolvable(f)
+    val solutions = findAllModelsFor(s1)
+    val s2 = eqFreePropToSolvableByExpansion(f)
+    //    println(s1.cnf.mkString("\n"))
+    //    println("***********")
+    //    println(s2.cnf.mkString("\n"))
+    val solutions2 = findAllModelsFor(s2)
+    val expanded = solutions.flatMap(expandUnassigned).sorted
+    val expanded2 = solutions2.flatMap(expandUnassigned).sorted
+    assertEquals(expanded, expanded2)
+  }
+
+  @Test
   def test3: Unit = {
     import TestSolver.TestSolver._
     val p: Var = Var(Tree("p"))
