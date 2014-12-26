@@ -73,7 +73,7 @@ object TestSolver extends Logic with Solving {
       def unapply(v: Var): Some[Tree] = Some(v.x)
     }
 
-    def prepareNewAnalysis = {}
+    def prepareNewAnalysis() = {}
 
     def reportWarning(msg: String) = sys.error(msg)
 
@@ -124,6 +124,69 @@ object TestSolver extends Logic with Solving {
       current.toList
     }
 
+    def eqFreePropToSolvableByExpansion(p: Prop) = {
+      val symbolMapping = new SymbolMapping(gatherSymbols(p))
+
+      type Formula = Array[TestSolver.Clause]
+
+      def formula(c: Clause*): Formula = c.toArray
+
+      def merge(a: Clause, b: Clause) = a ++ b
+
+      def negationNormalFormNot(p: Prop): Prop = p match {
+        case And(ps) => Or(ps map negationNormalFormNot)
+        case Or(ps) => And(ps map negationNormalFormNot)
+        case Not(p) => negationNormalForm(p)
+        case True => False
+        case False => True
+        case s: Sym => Not(s)
+      }
+
+      def negationNormalForm(p: Prop): Prop = p match {
+        case Or(ps) => Or(ps map negationNormalForm)
+        case And(ps) => And(ps map negationNormalForm)
+        case Not(negated) => negationNormalFormNot(negated)
+        case True
+             | False
+             | (_: Sym) => p
+      }
+
+      val TrueF: Formula = Array()
+      val FalseF = Array(clause())
+      def lit(sym: Sym) = Array(clause(symbolMapping.lit(sym)))
+      def negLit(sym: Sym) = Array(clause(-symbolMapping.lit(sym)))
+
+      def conjunctiveNormalForm(p: Prop): Formula = {
+        def distribute(a: Formula, b: Formula): Formula =
+          (a, b) match {
+            // true \/ _ = true
+            // _ \/ true = true
+            case (trueA, trueB) if trueA.size == 0 || trueB.size == 0 => TrueF
+            // lit \/ lit
+            case (a, b) if a.size == 1 && b.size == 1 => formula(merge(a(0), b(0)))
+            // (c1 /\ ... /\ cn) \/ d = ((c1 \/ d) /\ ... /\ (cn \/ d))
+            // d \/ (c1 /\ ... /\ cn) = ((d \/ c1) /\ ... /\ (d \/ cn))
+            case (cs, ds) =>
+              val (big, small) = if (cs.size > ds.size) (cs, ds) else (ds, cs)
+              big flatMap (c => distribute(formula(c), small))
+          }
+
+        p match {
+          case True => TrueF
+          case False => FalseF
+          case s: Sym => lit(s)
+          case Not(s: Sym) => negLit(s)
+          case And(ps) =>
+            ps.toArray flatMap conjunctiveNormalForm
+          case Or(ps) =>
+            ps map conjunctiveNormalForm reduceLeft { (a, b) =>
+              distribute(a, b)
+            }
+        }
+      }
+      val cnf = conjunctiveNormalForm(negationNormalForm(p))
+      Solvable(cnf, symbolMapping)
+    }
 
     //    def assertModels(expected: Seq[Model], actual: Seq[Model]) = {
     //      assertEquals(expected.length, actual.length)
@@ -146,18 +209,6 @@ object TestSolver extends Logic with Solving {
     of JUnit infrastructure work correctly */
 @RunWith(classOf[JUnit4])
 class SolvingTest {
-  //  @Test
-  //  def test1: Unit = {
-  //    import TestSolver.TestSolver._
-  //    val f = Or(True, False)
-  //    //    val f = Or(Var("p"), Not(Var("p")))
-  //    //          val models = allTseitinModels(f)
-  //    val solvable = propToSolvable(f)
-  //    val solutions = TestSolver.TestSolver.findAllModelsFor(solvable)
-  //    println(solutions)
-  //    //    assert(2 + 2 == 5, "you didn't get the math right fellow")
-  //    assertTrue("you didn't get the math right fellow", 2 + 2 == 4)
-  //  }
 
   import TestSolver.TestSolver._
 
@@ -166,7 +217,7 @@ class SolvingTest {
   }
 
   @Test
-  def testUnassigned() ni{
+  def testUnassigned() {
     val pSym = Sym(Var(Tree("p")), NullConst)
     val solvable = propToSolvable(Or(pSym, Not(pSym)))
     val solutions = TestSolver.TestSolver.findAllModelsFor(solvable)
