@@ -1,15 +1,11 @@
 package scala.tools.nsc.transform.patmat
 
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.junit.runners.JUnit4
 import org.junit.Assert._
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
 import scala.collection.mutable
-import scala.tools.nsc.transform.patmat.TestSolver
 import scala.tools.nsc.{Global, Settings}
 
 object TestSolver extends Logic with Solving {
@@ -124,7 +120,15 @@ object TestSolver extends Logic with Solving {
       current.toList
     }
 
-    def eqFreePropToSolvableByExpansion(p: Prop) = {
+    /**
+     * Old CNF conversion code, used for reference:
+     * - convert formula into NNF
+     *   (i.e., no negated terms, only negated variables)
+     * - use distributive laws to convert into CNF
+     *   f(X_1, X_2, ... , X_n) = X_1 /\ f(1, X_2, ... , X_n) \/
+     *                           !X_1 /\ f(0, X_2, ... , X_n)
+     */
+    def eqFreePropToSolvableViaShannonExpansion(p: Prop) = {
       val symbolMapping = new SymbolMapping(gatherSymbols(p))
 
       type Formula = Array[TestSolver.Clause]
@@ -188,19 +192,6 @@ object TestSolver extends Logic with Solving {
       Solvable(cnf, symbolMapping)
     }
 
-    //    def assertModels(expected: Seq[Model], actual: Seq[Model]) = {
-    //      assertEquals(expected.length, actual.length)
-    //      for {
-    //        ma <- actual
-    //      } yield {
-    //        ma.find {
-    //          case (sym: TestSolver.Sym, b: Boolean) =>
-    //          case (m: Model) => b must contain(m)
-    //
-    //        }
-    //      }
-    //    }
-
   }
 
 }
@@ -210,7 +201,7 @@ object TestSolver extends Logic with Solving {
 @RunWith(classOf[JUnit4])
 class SolvingTest {
 
-  import TestSolver.TestSolver._
+  import scala.tools.nsc.transform.patmat.TestSolver.TestSolver._
 
   implicit val Ord: Ordering[TestSolver.TestSolver.Model] = Ordering.by {
     _.toSeq.sortBy(_.toString()).toIterable
@@ -256,22 +247,6 @@ class SolvingTest {
     ).sorted
 
     assertEquals(expected, expanded)
-  }
-
-  @Test
-  def testTseitinVsShannon() {
-    val pSym = sym("p")
-    val qSym = sym("q")
-    val f1 = And(pSym, Not(qSym))
-    val f2 = And(Not(pSym), qSym)
-    val f = Or(f1, f2)
-    val s1 = propToSolvable(f)
-    val solutions = findAllModelsFor(s1)
-    val s2 = eqFreePropToSolvableByExpansion(f)
-    val solutions2 = findAllModelsFor(s2)
-    val expanded = solutions.flatMap(expandUnassigned).sorted
-    val expanded2 = solutions2.flatMap(expandUnassigned).sorted
-    assertEquals(expanded, expanded2)
   }
 
   @Test
@@ -557,15 +532,13 @@ class SolvingTest {
       Or(sym("V2=4"), Or(sym("V2=5"), sym("V2=6"))),
 
       sym("V3=scala.collection.immutable.::[?]")
-    ) //.sortBy(_.toString.length)
-
-
+    )
 
     formulas foreach {
       f =>
         // build CNF
         val tseitinCnf = propToSolvable(f)
-        val shannonCnf = eqFreePropToSolvableByExpansion(f)
+        val shannonCnf = eqFreePropToSolvableViaShannonExpansion(f)
 
         // ALL-SAT
         val tseitinSolutions = findAllModelsFor(tseitinCnf)
@@ -577,27 +550,6 @@ class SolvingTest {
         val shannonExpanded = shannonSolutins.flatMap(expandUnassigned).sorted
         assertEquals(tseitinExpanded, shannonExpanded)
     }
-  }
-
-  @Test
-  def test3: Unit = {
-    import TestSolver.TestSolver._
-    val p: Var = Var(Tree("p"))
-    val pSym: TestSolver.TestSolver.Sym = Sym(p, NullConst)
-    val f = Or(pSym, Not(pSym))
-    val solvable = propToSolvable(f)
-    val solutions: List[TestSolver.TestSolver.Solution] = TestSolver.TestSolver.findAllModelsFor(solvable)
-    val models = solutions.map(_.model)
-    val expected = Seq(
-      Map(p -> false),
-      Map(p -> true)
-    )
-    val expected2 = List(Solution(Map(), List(pSym)))
-    //    println(solutions.mkString("\n"))
-    //    println(models.mkString("\n"))
-    //    println(expected)
-    //    assertEquals(expected.toSet, models.toSet)
-    assertEquals(expected2, solutions)
   }
 }
 
