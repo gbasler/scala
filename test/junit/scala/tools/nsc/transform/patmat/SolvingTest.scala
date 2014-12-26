@@ -125,10 +125,8 @@ object TestSolver extends Logic with Solving {
      * - convert formula into NNF
      *   (i.e., no negated terms, only negated variables)
      * - use distributive laws to convert into CNF
-     *   f(X_1, X_2, ... , X_n) = X_1 /\ f(1, X_2, ... , X_n) \/
-     *                           !X_1 /\ f(0, X_2, ... , X_n)
      */
-    def eqFreePropToSolvableViaShannonExpansion(p: Prop) = {
+    def eqFreePropToSolvableViaDistribution(p: Prop) = {
       val symbolMapping = new SymbolMapping(gatherSymbols(p))
 
       type Formula = Array[TestSolver.Clause]
@@ -234,7 +232,7 @@ class SolvingTest {
    * for stable results
    */
   @Test
-  def testUnassignedWithExpansion() {
+  def testNoUnassigned() {
     val pSym = sym("p")
     val qSym = sym("q")
     val solvable = propToSolvable(Or(pSym, Not(qSym)))
@@ -250,7 +248,7 @@ class SolvingTest {
   }
 
   @Test
-  def testTseitinVsShannonFrom_t7020() {
+  def testTseitinVsExpansionFrom_t7020() {
     val formulas = Seq(
       And(And(And(Not(sym("V1=null")),
         sym("V1=scala.collection.immutable.::[?]")), And(Not(sym("V1=null")),
@@ -538,17 +536,17 @@ class SolvingTest {
       f =>
         // build CNF
         val tseitinCnf = propToSolvable(f)
-        val shannonCnf = eqFreePropToSolvableViaShannonExpansion(f)
+        val expansionCnf = eqFreePropToSolvableViaDistribution(f)
 
         // ALL-SAT
         val tseitinSolutions = findAllModelsFor(tseitinCnf)
-        val shannonSolutins = findAllModelsFor(shannonCnf)
+        val expansionSolutins = findAllModelsFor(expansionCnf)
 
         // expand unassigned variables
         // (otherwise solutions can not be compared)
-        val tseitinExpanded = tseitinSolutions.flatMap(expandUnassigned).sorted
-        val shannonExpanded = shannonSolutins.flatMap(expandUnassigned).sorted
-        assertEquals(tseitinExpanded, shannonExpanded)
+        val tseitinNoUnassigned = tseitinSolutions.flatMap(expandUnassigned).sorted
+        val expansionNoUnassigned = expansionSolutins.flatMap(expandUnassigned).sorted
+        assertEquals(tseitinNoUnassigned, expansionNoUnassigned)
     }
   }
 }
