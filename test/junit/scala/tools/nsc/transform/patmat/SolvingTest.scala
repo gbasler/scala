@@ -11,6 +11,8 @@ import scala.tools.nsc.{Global, Settings}
 object TestSolver extends Logic with Solving {
 
   val global: Global = new Global(new Settings())
+
+  // disable max recursion depth in order to get all solutions
   global.settings.YpatmatExhaustdepth.tryToSet("off" :: Nil)
 
   object TestSolver extends Solver {
