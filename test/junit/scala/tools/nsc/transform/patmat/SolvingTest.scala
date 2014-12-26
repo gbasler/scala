@@ -84,7 +84,8 @@ object TestSolver extends Logic with Solving {
      * as solution.
      *
      * The expansion step will amend both solutions with the unassigned variable
-     * i.e., {a = true} will be expanded to {a = true, b = true} and {a = true, b = false}.
+     * i.e., {a = true} will be expanded to {a = true, b = true} and
+     * {a = true, b = false}.
      */
     def expandUnassigned(solution: Solution): List[Model] = {
       import solution._
@@ -133,20 +134,20 @@ object TestSolver extends Logic with Solving {
 
       def negationNormalFormNot(p: Prop): Prop = p match {
         case And(ps) => Or(ps map negationNormalFormNot)
-        case Or(ps) => And(ps map negationNormalFormNot)
-        case Not(p) => negationNormalForm(p)
-        case True => False
-        case False => True
-        case s: Sym => Not(s)
+        case Or(ps)  => And(ps map negationNormalFormNot)
+        case Not(p)  => negationNormalForm(p)
+        case True    => False
+        case False   => True
+        case s: Sym  => Not(s)
       }
 
       def negationNormalForm(p: Prop): Prop = p match {
-        case Or(ps) => Or(ps map negationNormalForm)
-        case And(ps) => And(ps map negationNormalForm)
+        case Or(ps)       => Or(ps map negationNormalForm)
+        case And(ps)      => And(ps map negationNormalForm)
         case Not(negated) => negationNormalFormNot(negated)
         case True
              | False
-             | (_: Sym) => p
+             | (_: Sym)   => p
       }
 
       val TrueF: Formula = Array()
@@ -170,13 +171,13 @@ object TestSolver extends Logic with Solving {
           }
 
         p match {
-          case True => TrueF
-          case False => FalseF
-          case s: Sym => lit(s)
+          case True        => TrueF
+          case False       => FalseF
+          case s: Sym      => lit(s)
           case Not(s: Sym) => negLit(s)
-          case And(ps) =>
+          case And(ps)     =>
             ps.toArray flatMap conjunctiveNormalForm
-          case Or(ps) =>
+          case Or(ps)      =>
             ps map conjunctiveNormalForm reduceLeft { (a, b) =>
               distribute(a, b)
             }
@@ -214,19 +215,36 @@ class SolvingTest {
     _.toSeq.sortBy(_.toString()).toIterable
   }
 
+
+  private def sym(name: String) = Sym(Var(Tree(name)), NullConst)
+
+  @Test
+  def testSymCreation() {
+    val s1 = sym("hello")
+    val s2 = sym("hello")
+    assertEquals(s1, s2)
+  }
+
+  /**
+   * Simplest possible test: solve a formula and check the solution(s)
+   */
   @Test
   def testUnassigned() {
-    val pSym = Sym(Var(Tree("p")), NullConst)
+    val pSym = sym("p")
     val solvable = propToSolvable(Or(pSym, Not(pSym)))
     val solutions = TestSolver.TestSolver.findAllModelsFor(solvable)
     val expected = List(Solution(Map(), List(pSym)))
     assertEquals(expected, solutions)
   }
 
+  /**
+   * Unassigned variables must be expanded
+   * for stable results
+   */
   @Test
   def testUnassignedWithExpansion() {
-    val pSym = Sym(Var(Tree("p")), NullConst)
-    val qSym = Sym(Var(Tree("q")), NullConst)
+    val pSym = sym("p")
+    val qSym = sym("q")
     val solvable = propToSolvable(Or(pSym, Not(qSym)))
     val solutions = findAllModelsFor(solvable)
     val expanded = solutions.flatMap(expandUnassigned).sorted
@@ -241,30 +259,18 @@ class SolvingTest {
 
   @Test
   def testTseitinVsShannon() {
-    val pSym = Sym(Var(Tree("p")), NullConst)
-    val qSym = Sym(Var(Tree("q")), NullConst)
+    val pSym = sym("p")
+    val qSym = sym("q")
     val f1 = And(pSym, Not(qSym))
     val f2 = And(Not(pSym), qSym)
     val f = Or(f1, f2)
     val s1 = propToSolvable(f)
     val solutions = findAllModelsFor(s1)
     val s2 = eqFreePropToSolvableByExpansion(f)
-    //    println(s1.cnf.mkString("\n"))
-    //    println("***********")
-    //    println(s2.cnf.mkString("\n"))
     val solutions2 = findAllModelsFor(s2)
     val expanded = solutions.flatMap(expandUnassigned).sorted
     val expanded2 = solutions2.flatMap(expandUnassigned).sorted
     assertEquals(expanded, expanded2)
-  }
-
-  def sym(name: String) = Sym(Var(Tree(name)), NullConst)
-
-  @Test
-  def testSymCreation() {
-    val s1 = sym("hello")
-    val s2 = sym("hello")
-    assertEquals(s1, s2)
   }
 
   @Test
@@ -304,60 +310,24 @@ class SolvingTest {
       , And(sym("V2=7"), sym("V3=Nil"))
       , False
       , Not(sym("V1=Nil"))
-      , Not(sym("V1=null"))
-      , Not(sym("V1=scala.collection.immutable.::[?]"))
-      , Not(sym("V2=1"))
-      , Not(sym("V2=2"))
-      , Not(sym("V2=4"))
-      , Not(sym("V2=5"))
-      , Not(sym("V2=6"))
-      , Not(sym("V2=7"))
-      , Not(sym("V3=Nil"))
-      , Not(sym("V3=null"))
-      , Not(sym("V3=scala.collection.immutable.::[?]"))
       , Or(And(Not(sym("V2=4")), And(Not(sym("V2=5")), Not(sym("V2=6")))), Not(sym("V3=Nil")))
       , Or(False, Not(sym("V1=scala.collection.immutable.::[?]")))
       , Or(False, Or(And(Not(sym("V2=4")), And(Not(sym("V2=5")), Not(sym("V2=6")))), Not(sym("V3=Nil"))))
       , Or(False, Or(Not(sym("V2=1")), Not(sym("V3=Nil"))))
-      , Or(False, Or(Not(sym("V2=2")), Not(sym("V3=Nil"))))
-      , Or(False, Or(Not(sym("V2=7")), Not(sym("V3=Nil"))))
       , Or(Not(sym("V1=Nil")), Not(sym("V1=null")))
       , Or(Not(sym("V1=scala.collection.immutable.::[?]")), Not(sym("V1=null")))
-      , Or(Not(sym("V2=1")), Not(sym("V3=Nil")))
-      , Or(Not(sym("V2=2")), Not(sym("V3=Nil")))
-      , Or(Not(sym("V2=7")), Not(sym("V3=Nil")))
-      , Or(Not(sym("V3=Nil")), Not(sym("V3=null")))
       , Or(Not(sym("V3=scala.collection.immutable.::[?]")), Not(sym("V3=null")))
       , Or(Or(False, Not(sym("V1=scala.collection.immutable.::[?]"))), Or(False, Or(And(Not(sym("V2=4")), And(Not(sym("V2=5")), Not(sym("V2=6")))), Not(sym("V3=Nil")))))
       , Or(Or(False, Not(sym("V1=scala.collection.immutable.::[?]"))), Or(False, Or(Not(sym("V2=1")), Not(sym("V3=Nil")))))
-      , Or(Or(False, Not(sym("V1=scala.collection.immutable.::[?]"))), Or(False, Or(Not(sym("V2=2")), Not(sym("V3=Nil")))))
-      , Or(Or(False, Not(sym("V1=scala.collection.immutable.::[?]"))), Or(False, Or(Not(sym("V2=7")), Not(sym("V3=Nil")))))
       , Or(Or(sym("V1=null"), Not(sym("V1=scala.collection.immutable.::[?]"))), Or(sym("V1=null"), Or(And(Not(sym("V2=4")), And(Not(sym("V2=5")), Not(sym("V2=6")))), Not(sym("V3=Nil")))))
       , Or(Or(sym("V1=null"), Not(sym("V1=scala.collection.immutable.::[?]"))), Or(sym("V1=null"), Or(Not(sym("V2=1")), Not(sym("V3=Nil")))))
-      , Or(Or(sym("V1=null"), Not(sym("V1=scala.collection.immutable.::[?]"))), Or(sym("V1=null"), Or(Not(sym("V2=2")), Not(sym("V3=Nil")))))
-      , Or(Or(sym("V1=null"), Not(sym("V1=scala.collection.immutable.::[?]"))), Or(sym("V1=null"), Or(Not(sym("V2=7")), Not(sym("V3=Nil")))))
-      , Or(sym("V1=Nil"), sym("V1=null"))
       , Or(sym("V1=null"), Not(sym("V1=scala.collection.immutable.::[?]")))
       , Or(sym("V1=null"), Or(And(Not(sym("V2=4")), And(Not(sym("V2=5")), Not(sym("V2=6")))), Not(sym("V3=Nil"))))
       , Or(sym("V1=null"), Or(Not(sym("V2=1")), Not(sym("V3=Nil"))))
-      , Or(sym("V1=null"), Or(Not(sym("V2=2")), Not(sym("V3=Nil"))))
-      , Or(sym("V1=null"), Or(Not(sym("V2=7")), Not(sym("V3=Nil"))))
       , Or(sym("V1=scala.collection.immutable.::[?]"), Or(sym("V1=Nil"), sym("V1=null")))
       , Or(sym("V1=scala.collection.immutable.::[?]"), sym("V1=Nil"))
       , Or(sym("V2=4"), Or(sym("V2=5"), sym("V2=6")))
       , Or(sym("V2=5"), sym("V2=6"))
-      , Or(sym("V3=Nil"), sym("V3=null"))
-      , Or(sym("V3=scala.collection.immutable.::[?]"), Or(sym("V3=Nil"), sym("V3=null")))
-      , Or(sym("V3=scala.collection.immutable.::[?]"), sym("V3=Nil"))
-      , sym("V1=Nil")
-      , sym("V1=null")
-      , sym("V1=scala.collection.immutable.::[?]")
-      , sym("V2=4")
-      , sym("V2=5")
-      , sym("V2=6")
-      , sym("V2=7")
-      , sym("V3=Nil")
-      , sym("V3=null")
       , sym("V3=scala.collection.immutable.::[?]")
     ).sortBy(_.toString.length)
 
