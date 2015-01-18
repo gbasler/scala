@@ -289,7 +289,7 @@ trait Solving extends Logic {
 
     // returns all solutions, if any (TODO: better infinite recursion backstop -- detect fixpoint??)
     def findAllModelsFor(solvable: Solvable): List[Solution] = {
-      debug.patmat("find all models for\n"+ cnfString(solvable.cnf))
+      println("find all models for\n"+ cnfString(solvable.cnf))
 
       // we must take all vars from non simplified formula
       // otherwise if we get `T` as formula, we don't expand the variables

@@ -183,6 +183,8 @@ trait Logic extends Debugging  {
         case True     => False
         case False    => True
         case s: Sym   => Not(s)
+        case e: Eq => Not(e)
+
       }
 
       def negationNormalForm(p: Prop): Prop = p match {
@@ -191,7 +193,8 @@ trait Logic extends Debugging  {
         case Not(negated) => negationNormalFormNot(negated)
         case True
              | False
-             | (_: Sym)   => p
+             | (_: Sym)
+             | (_: Eq) => p
       }
 
       def simplifyProp(p: Prop): Prop = p match {
@@ -358,10 +361,20 @@ trait Logic extends Debugging  {
           // ... and what must not?
           excluded foreach (excludedSym => addAxiom(Or(Not(sym), Not(excludedSym))))
         }
+
+        def foo(syms: List[Sym]): String = {
+          if(syms.isEmpty) "{}" else syms.mkString("{", ",", "}")
+        }
+
+//        println(props)
+        println(s"${v} => " + v.implications.map {
+          case (sym, syms, syms0) =>
+            s"($sym / ${foo(syms)} / ${foo(syms0)})"
+        }.mkString(", "))
       }
 
-      debug.patmat(s"eqAxioms:\n${eqAxioms.mkString("\n")}")
-      debug.patmat(s"pure:${pure.mkString("\n")}")
+//      println(s"eqAxioms:\n${eqAxioms.mkString("\n")}")
+//      println(s"pure:${pure.mkString("\n")}")
 
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaVarEq, start)
 

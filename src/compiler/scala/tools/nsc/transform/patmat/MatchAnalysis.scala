@@ -489,7 +489,11 @@ trait MatchAnalysis extends MatchApproximation {
             backoff = true
             False
         })
-      }) map caseWithoutBodyToProp
+      }) map {
+        tests =>
+          val p =  caseWithoutBodyToProp(tests)
+          p
+      }
 
       if (backoff) Nil else {
         val prevBinderTree = approx.binderToUniqueTree(prevBinder)
@@ -515,6 +519,9 @@ trait MatchAnalysis extends MatchApproximation {
         // debug.patmat("\nmatchFails as CNF:\n"+ cnfString(propToSolvable(matchFails)))
 
         // find the models (under which the match fails)
+//        println(symbolicCases)
+//        println(matchFails)
+//        println(simplify(matchFails))
         val matchFailModels = findAllModelsFor(propToSolvable(matchFails))
 
         val scrutVar = Var(prevBinderTree)
