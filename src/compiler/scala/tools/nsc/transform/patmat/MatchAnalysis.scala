@@ -776,12 +776,20 @@ trait MatchAnalysis extends MatchApproximation {
         private lazy val ctor       = (prunedEqualTo match { case List(TypeConst(tp)) => tp case _ => variable.staticTpCheckable }).typeSymbol.primaryConstructor
         private lazy val ctorParams = if (ctor.paramss.isEmpty) Nil else ctor.paramss.head
         private lazy val cls        = ctor.safeOwner
-        private lazy val caseFieldAccs = cls.caseFieldAccessors
+        private lazy val caseFieldAccs: List[Symbol] = cls.caseFieldAccessors
+        val seenInvalidAssign: mutable.Set[Symbol] = mutable.Set.empty
 
         def addField(symbol: Symbol, assign: VariableAssignment) {
+          val a: Boolean = !symbol.isCaseAccessor
+          val b: Boolean = caseFieldAccs.contains(symbol)
+          println(s"combining: $this with $assign, $a, $b")
           // SI-7669 Only register this field if if this class contains it.
-          val shouldConstrainField = !symbol.isCaseAccessor || caseFieldAccs.contains(symbol)
+          val shouldConstrainField = a || b
           if (shouldConstrainField) fields(symbol) = assign
+          else {
+            println(s"seen invalid for $symbol")
+            seenInvalidAssign += symbol
+          }
         }
 
         def allFieldAssignmentsLegal: Boolean =
@@ -811,8 +819,29 @@ trait MatchAnalysis extends MatchApproximation {
                   // figure out the constructor arguments from the field assignment
                   val argLen = (caseFieldAccs.length min ctorParams.length)
 
-                  val examples = (0 until argLen).map(i => fields.get(caseFieldAccs(i)).map(_.toCounterExample(brevity)) getOrElse Some(WildcardExample)).toList
-                  sequence(examples)
+                  val examples = (0 until argLen).map {
+                    i =>
+                      val map: Option[Option[CounterExample]] = fields.get(caseFieldAccs(i)).map {
+                        p =>
+                          println(p)
+                          p.toCounterExample(brevity)
+                      }
+                      val a: Option[VariableAssignment] = fields.get(caseFieldAccs(i))
+                      map getOrElse {
+//                        if(seenInvalidAssign.contains(caseFieldAccs(i))) {
+//                          None
+//                        } else
+                          Some(WildcardExample)
+                      }
+                  }.toList
+                  val a: Option[List[CounterExample]] = sequence(examples)
+                  val isInvalid = (0 until argLen).exists {
+                    i =>
+                      seenInvalidAssign.contains(caseFieldAccs(i))
+                  }
+                  println(s"is $a invalid? $isInvalid")
+//                  if(!isInvalid) None else a
+                  a
                 }
 
                 cls match {
