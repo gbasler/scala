@@ -371,7 +371,14 @@ trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchT
       }
 
       final def approximateMatch(cases: List[List[TreeMaker]], treeMakerToProp: TreeMakerToProp = conservative) ={
-        val testss = cases.map { _ map (tm => Test(treeMakerToProp(tm), tm)) }
+        val testss = {
+          cases.map {
+            _ map {
+              tm =>
+                Test(treeMakerToProp(tm), tm)
+            }
+          }
+        }
         substitutionComputed = true // a second call to approximateMatch should not re-compute the substitution (would be wrong)
         testss
       }
@@ -482,14 +489,16 @@ trait MatchAnalysis extends MatchApproximation {
       var backoff = false
 
       val approx = new TreeMakersToPropsIgnoreNullChecks(prevBinder)
-      val symbolicCases = approx.approximateMatch(cases, approx.onUnknown { tm =>
+      val symbolicCases0 = approx.approximateMatch(cases, approx.onUnknown { tm =>
         approx.fullRewrite.applyOrElse[TreeMaker, Prop](tm, {
           case BodyTreeMaker(_, _) => True // irrelevant -- will be discarded by symbolCase later
           case _ => // debug.patmat("backing off due to "+ tm)
             backoff = true
             False
         })
-      }) map {
+      })
+
+      val symbolicCases = symbolicCases0 map {
         tests =>
           val p =  caseWithoutBodyToProp(tests)
           p
@@ -522,6 +531,8 @@ trait MatchAnalysis extends MatchApproximation {
 //        println(symbolicCases)
 //        println(matchFails)
 //        println(simplify(matchFails))
+        // TODO: add pointers to outers here?
+        val (eqAxiom, pure :: Nil) = removeVarEq(List(matchFails), modelNull = false)
         val matchFailModels = findAllModelsFor(propToSolvable(matchFails))
 
         val scrutVar = Var(prevBinderTree)
@@ -787,8 +798,10 @@ trait MatchAnalysis extends MatchApproximation {
           val shouldConstrainField = a || b
           if (shouldConstrainField) fields(symbol) = assign
           else {
-            println(s"seen invalid for $symbol")
-            seenInvalidAssign += symbol
+            if (!b) {
+              println(s"seen invalid for $symbol")
+              seenInvalidAssign += symbol
+            }
           }
         }
 
@@ -827,8 +840,9 @@ trait MatchAnalysis extends MatchApproximation {
                           p.toCounterExample(brevity)
                       }
                       val a: Option[VariableAssignment] = fields.get(caseFieldAccs(i))
+                      println(s"caseFieldAccs(i): ${caseFieldAccs(i)}")
                       map getOrElse {
-//                        if(seenInvalidAssign.contains(caseFieldAccs(i))) {
+//                        if(seenInvalidAssign.nonEmpty) {
 //                          None
 //                        } else
                           Some(WildcardExample)
@@ -837,10 +851,11 @@ trait MatchAnalysis extends MatchApproximation {
                   val a: Option[List[CounterExample]] = sequence(examples)
                   val isInvalid = (0 until argLen).exists {
                     i =>
-                      seenInvalidAssign.contains(caseFieldAccs(i))
+                      seenInvalidAssign.nonEmpty
                   }
+                  println(s"seenInvalidAssign: $seenInvalidAssign")
                   println(s"is $a invalid? $isInvalid")
-//                  if(!isInvalid) None else a
+//                  if(isInvalid) None else a
                   a
                 }
 
