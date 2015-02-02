@@ -269,6 +269,30 @@ trait Logic extends Debugging  {
       vars.toSet
     }
 
+    def gatherConsts(p: Prop): Set[Const] = {
+      val vars = new mutable.HashSet[Const]()
+      (new PropTraverser {
+        override def apply(p: Prop) = p match {
+          case Eq(v, c) =>
+            vars += c
+          case _ => super.apply(p)
+        }
+      })(p)
+      vars.toSet
+    }
+
+    def gatherEqualities(p: Prop): Set[Eq] = {
+      val vars = new mutable.HashSet[Eq]()
+      (new PropTraverser {
+        override def apply(p: Prop) = p match {
+          case eq: Eq =>
+            vars += eq
+          case _ => super.apply(p)
+        }
+      })(p)
+      vars.toSet
+    }
+
     def gatherSymbols(p: Prop): Set[Sym] = {
       val syms = new mutable.HashSet[Sym]()
       (new PropTraverser {

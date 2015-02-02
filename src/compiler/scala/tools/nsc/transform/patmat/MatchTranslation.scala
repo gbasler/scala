@@ -124,11 +124,13 @@ trait MatchTranslation {
 
         // paramType = the type expected by the unapply
         // TODO: paramType may contain unbound type params (run/t2800, run/t3530)
-        val makers = (
+        val makers: List[TreeMaker] = (
           // Statically conforms to paramType
           if (this ensureConformsTo paramType) treeMaker(binder, false, pos) :: Nil
           else typeTest :: extraction :: Nil
         )
+        println("gorgeous treemakers")
+        println(makers)
         step(makers: _*)(extractor.subBoundTrees: _*)
       }
 
@@ -310,7 +312,7 @@ trait MatchTranslation {
       *    a function that will take care of binding and substitution of the next ast (to the right).
       *
       */
-    def translateCase(scrutSym: Symbol, pt: Type)(caseDef: CaseDef) = {
+    def translateCase(scrutSym: Symbol, pt: Type)(caseDef: CaseDef): List[TreeMaker] = {
       val CaseDef(pattern, guard, body) = caseDef
       translatePattern(BoundTree(scrutSym, pattern)) ++ translateGuard(guard) :+ translateBody(body, pt)
     }

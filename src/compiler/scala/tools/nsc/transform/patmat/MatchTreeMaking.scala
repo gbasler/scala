@@ -475,7 +475,8 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
 
       def impliesBinderNonNull(binder: Symbol) = renderCondition(nonNullImpliedByTestChecker(binder))
 
-      override def toString = "TT"+((expectedTp, testedBinder.name, nextBinderTp))
+//      override def toString = "TT"+((expectedTp, testedBinder.name, nextBinderTp))
+      override def toString = "TT"+(prevBinder.name, testedBinder.name, expectedTp, nextBinderTp)
     }
 
     // need to substitute to deal with existential types -- TODO: deal with existentials better, don't substitute (see RichClass during quick.comp)

@@ -327,7 +327,8 @@ trait MatchApproximation extends TreeAndTypeAnalysis with ScalaLogic with MatchT
                 def tru                                               = True
               }
               ttm.renderCondition(condStrategy)
-            case EqualityTestTreeMaker(prevBinder, patTree, _)        => uniqueEqualityProp(binderToUniqueTree(prevBinder), unique(patTree))
+            case EqualityTestTreeMaker(prevBinder, patTree, _)        =>
+              uniqueEqualityProp(binderToUniqueTree(prevBinder), unique(patTree))
             case AlternativesTreeMaker(_, altss, _)                   => \/(altss map (alts => /\(alts map this)))
             case ProductExtractorTreeMaker(testedBinder, None)        => uniqueNonNullProp(binderToUniqueTree(testedBinder))
             case SubstOnlyTreeMaker(_, _)                             => True
@@ -489,6 +490,9 @@ trait MatchAnalysis extends MatchApproximation {
       var backoff = false
 
       val approx = new TreeMakersToPropsIgnoreNullChecks(prevBinder)
+      // TODO: this is the place where we have all the info we need, to fix it!
+      // the stored binders of the product extractors contain references
+      // to the case class fields, extract them and add constraints accordingly!
       val symbolicCases0 = approx.approximateMatch(cases, approx.onUnknown { tm =>
         approx.fullRewrite.applyOrElse[TreeMaker, Prop](tm, {
           case BodyTreeMaker(_, _) => True // irrelevant -- will be discarded by symbolCase later
@@ -503,6 +507,18 @@ trait MatchAnalysis extends MatchApproximation {
           val p =  caseWithoutBodyToProp(tests)
           p
       }
+
+//      symbolicCases.map {
+//        case prop: Prop => prop match {
+//          case Eq(p, q) =>
+//          case And(ops) =>
+//          case Or(ops)  =>
+//          case Not(a)   =>
+//          case True     =>
+//          case False    =>
+//          case _        =>
+//        }
+//      }
 
       if (backoff) Nil else {
         val prevBinderTree = approx.binderToUniqueTree(prevBinder)
@@ -534,6 +550,53 @@ trait MatchAnalysis extends MatchApproximation {
         // TODO: add pointers to outers here?
         val (eqAxiom, pure :: Nil) = removeVarEq(List(matchFails), modelNull = false)
         val matchFailModels = findAllModelsFor(propToSolvable(matchFails))
+
+
+        val vars: List[Set[Var]] = symbolicCases.map {
+          p => gatherVariables(p)
+        }
+
+        val doms = vars.map(_.map{
+          v => v.domain
+        })
+
+        val eq: List[Set[Eq]] = symbolicCases.map {
+          p => gatherEqualities(p)
+        }
+
+        val r = eq.map {
+          _.map {
+            case Eq(v, c) =>
+              val tpe = c.tp
+             val declarations = tpe.declarations
+             val ctor = declarations.collectFirst {
+               case m: MethodSymbol if m.isPrimaryConstructor => m
+             }.get
+             val paramss: List[List[Symbol]] = ctor.paramss
+             val params: List[Symbol] = paramss.head
+             params.map {
+               s =>
+                 val a = s.tpe
+                 val b = s.baseClasses
+                 a
+             }
+             v.path -> params
+          }
+        }
+
+        case class VariableAssignment(variable: Var) {
+          // need to prune since the model now incorporates all super types of a constant (needed for reachability)
+//          private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
+//          private lazy val prunedEqualTo = uniqueEqualTo filterNot (subsumed => variable.staticTpCheckable <:< subsumed.tp)
+//          private lazy val ctor = (prunedEqualTo match {
+//            case List(TypeConst(tp)) => tp
+//            case _ => variable.staticTpCheckable
+//          }).typeSymbol.primaryConstructor
+//          private lazy val ctorParams = if (ctor.paramss.isEmpty) Nil else ctor.paramss.head
+//          private lazy val cls = ctor.safeOwner
+//          private lazy val caseFieldAccs: List[Symbol] = cls.caseFieldAccessors
+        }
+
 
         val scrutVar = Var(prevBinderTree)
         val counterExamples = {
@@ -793,7 +856,7 @@ trait MatchAnalysis extends MatchApproximation {
         def addField(symbol: Symbol, assign: VariableAssignment) {
           val a: Boolean = !symbol.isCaseAccessor
           val b: Boolean = caseFieldAccs.contains(symbol)
-          println(s"combining: $this with $assign, $a, $b")
+//          println(s"combining: $this with $assign, $a, $b")
           // SI-7669 Only register this field if if this class contains it.
           val shouldConstrainField = a || b
           if (shouldConstrainField) fields(symbol) = assign

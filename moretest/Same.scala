@@ -20,11 +20,11 @@ object Test {
 
   def foo(c: C): Unit = c match {
     case One(A1, B1) =>
-    //    case One(A2, B1) =>
-    //    case One(A1, B2) =>
-    //    case One(A2, B2) =>
+        case One(A2, B1) =>
+        case One(A1, B2) =>
+        case One(A2, B2) =>
     case Two(B1, A1) =>
-    //    case Two(B2, A1) =>
+        case Two(B2, A1) =>
     //    case Two(B1, A2) =>
     //    case Two(B2, A2) =>
   }
@@ -34,7 +34,7 @@ object Test {
     //    case One(A2, B1) =>
     //    case One(A1, B2) =>
     //    case One(A2, B2) =>
-    case (_: Two, B1, A1) =>
+    case (_: Two, A1, B1) =>
     //    case Two(B2, A1) =>
     //    case Two(B1, A2) =>
     //    case Two(B2, A2) =>
