@@ -493,7 +493,7 @@ trait MatchAnalysis extends MatchApproximation {
       // TODO: this is the place where we have all the info we need, to fix it!
       // the stored binders of the product extractors contain references
       // to the case class fields, extract them and add constraints accordingly!
-      val symbolicCases0 = approx.approximateMatch(cases, approx.onUnknown { tm =>
+      val symbolicCases0: List[List[Test]] = approx.approximateMatch(cases, approx.onUnknown { tm =>
         approx.fullRewrite.applyOrElse[TreeMaker, Prop](tm, {
           case BodyTreeMaker(_, _) => True // irrelevant -- will be discarded by symbolCase later
           case _ => // debug.patmat("backing off due to "+ tm)
@@ -503,10 +503,28 @@ trait MatchAnalysis extends MatchApproximation {
       })
 
       val symbolicCases = symbolicCases0 map {
-        tests =>
+        (tests: List[Test]) =>
           val p =  caseWithoutBodyToProp(tests)
           p
       }
+
+      val deps = (cases.flatten.collect {
+        case maker: ProductExtractorTreeMaker => maker.subPatBinders.map {
+          symbol => maker.prevBinder -> symbol
+        }
+      }).flatten.distinct
+
+      val deps2 = symbolicCases0 map {
+        (tests: List[Test]) =>
+          val a: List[(Prop, Symbol)] = tests.collect {
+            case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders.map {
+              symbol => p -> symbol
+            }
+          }.flatten
+          a
+      }
+
+      val deps3 = deps2.flatten.distinct
 
 //      symbolicCases.map {
 //        case prop: Prop => prop match {
@@ -549,6 +567,14 @@ trait MatchAnalysis extends MatchApproximation {
 //        println(simplify(matchFails))
         // TODO: add pointers to outers here?
         val (eqAxiom, pure :: Nil) = removeVarEq(List(matchFails), modelNull = false)
+        // eqAxiom knows the domain of the variables!
+        // proof: contains no A2!
+        // Not(Or(Set(And(Set(And(Set(True, Eq(V1,Test.One))), True, Eq(V2,A1), Eq(V3,B1))), And(Set(And(Set(True, Eq(V1,Test.Two))), True, Eq(V3,B1), Eq(V2,A1))))))
+        // eqAxiom contains A2!
+        // And(Set(Or(Set(V3=B1#12, V3=Test.B2.type#14)), Or(Set(V2=A1#11, V2=Test.A2.type#15)), Or(Set(V1=Test.One#10, V1=Test.Two#13))))
+
+
+        // after here implication etc is valid
         val matchFailModels = findAllModelsFor(propToSolvable(matchFails))
 
 
@@ -567,6 +593,7 @@ trait MatchAnalysis extends MatchApproximation {
         val r = eq.map {
           _.map {
             case Eq(v, c) =>
+              v.domain
               val tpe = c.tp
              val declarations = tpe.declarations
              val ctor = declarations.collectFirst {
@@ -580,7 +607,7 @@ trait MatchAnalysis extends MatchApproximation {
                  val b = s.baseClasses
                  a
              }
-             v.path -> params
+              (v.path, v.domain, params)
           }
         }
 

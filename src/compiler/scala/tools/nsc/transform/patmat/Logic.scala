@@ -400,6 +400,9 @@ trait Logic extends Debugging  {
 //      println(s"eqAxioms:\n${eqAxioms.mkString("\n")}")
 //      println(s"pure:${pure.mkString("\n")}")
 
+
+
+
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaVarEq, start)
 
       (And(eqAxioms: _*), pure)
