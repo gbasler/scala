@@ -511,68 +511,46 @@ trait MatchAnalysis extends MatchApproximation {
 
       val symbolicCases: List[Prop] = symbolicCases1.unzip._2
 
-      val propForTreeMaker: List[(TreeMaker, Prop)] = symbolicCases0 flatMap  {
+      // substitutions seem to be valid only for one case!
+      val deps: List[List[(Prop, Prop)]] = symbolicCases0 map {
         (tests: List[Test]) =>
-          tests.map {
+          val substitutions = tests.map {
+            case Test(p, maker) =>
+              maker.substitution.from -> maker.substitution.to
+          }
+
+          val propForTreeMaker = tests.map {
             case test: Test => test.treeMaker -> test.prop
           }
-      }
 
-      val propForTreeMaker2: Map[Symbol, Prop] = propForTreeMaker.collect {
-        case (ProductExtractorTreeMaker(prev, _), prop) => prev -> prop
-        case (EqualityTestTreeMaker(prev, _ ,_), prop) => prev -> prop
-        case (TypeTestTreeMaker(prev, _ ,_, _), prop) => prev -> prop
-      }.toMap
+          val propForTreeMaker2: Map[Symbol, Prop] = propForTreeMaker.collect {
+            case (ProductExtractorTreeMaker(prev, _), prop) => prev -> prop
+            case (EqualityTestTreeMaker(prev, _ ,_), prop) => prev -> prop
+            case (TypeTestTreeMaker(prev, _ ,_, _), prop) => prev -> prop
+          }.toMap
 
-
-      val substitutions: List[(List[Symbol], List[Tree])] = propForTreeMaker.map {
-          case (maker, prop) =>
-          maker.substitution.from -> maker.substitution.to
-      }
-
-      val propForTreeMaker3: Map[Symbol, Prop] = propForTreeMaker2.flatMap {
-        case (symbol: Symbol, prop: Prop) =>
-          substitutions.collect {
-            case (Seq(`symbol`), Seq(tree)) =>
-              tree.symbol -> prop
+          val propForTreeMaker3: Map[Symbol, Prop] = propForTreeMaker2.flatMap {
+            case (symbol: Symbol, prop: Prop) =>
+              substitutions.collect {
+                case (Seq(`symbol`), Seq(tree)) =>
+                  tree.symbol -> prop
+              }
           }
-      }
 
-      val deps = (cases.flatten.collect {
-        case maker: ProductExtractorTreeMaker => maker.subPatBinders.map {
-          symbol => maker -> propForTreeMaker2(symbol)
-        }
-      }).flatten.distinct
-
-      val deps2 = (symbolicCases0 map {
-        (tests: List[Test]) =>
-          val a = tests.collect {
-            case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders.map {
-              symbol => maker.prevBinder -> symbol
-            }
-          }.flatten
-          a
-      }).flatten
-
-      val deps5 = deps2.map {
-        case (from, to) =>
-          propForTreeMaker3(from) -> propForTreeMaker2(to)
-      }
-
-      val deps4 = symbolicCases0 map {
-        (tests: List[Test]) =>
-          val a = tests.collect {
+          val dep = tests.collect {
             case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders.map {
               symbol =>
                 val pp = propForTreeMaker2(symbol)
-//                val ppp = propForTreeMaker3.get(symbol).map(p => simplify(And(pp,p))).getOrElse(p)
-                maker.prevBinder -> pp
+                //                val ppp = propForTreeMaker3.get(symbol).map(p => simplify(And(pp,p))).getOrElse(p)
+                val prop = propForTreeMaker3(maker.prevBinder)
+                simplify(prop) -> pp
             }
           }.flatten
-          a
+          dep
       }
 
-//      symbolicCases.map {
+
+      //      symbolicCases.map {
 //        case prop: Prop => prop match {
 //          case Eq(p, q) =>
 //          case And(ops) =>
