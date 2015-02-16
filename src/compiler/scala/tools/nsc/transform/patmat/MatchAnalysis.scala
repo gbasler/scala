@@ -502,29 +502,75 @@ trait MatchAnalysis extends MatchApproximation {
         })
       })
 
-      val symbolicCases = symbolicCases0 map {
+      val symbolicCases1: List[(List[Test], Prop)] = symbolicCases0 map {
         (tests: List[Test]) =>
           val p =  caseWithoutBodyToProp(tests)
-          p
+          tests -> p
+      }
+
+
+      val symbolicCases: List[Prop] = symbolicCases1.unzip._2
+
+      val propForTreeMaker: List[(TreeMaker, Prop)] = symbolicCases0 flatMap  {
+        (tests: List[Test]) =>
+          tests.map {
+            case test: Test => test.treeMaker -> test.prop
+          }
+      }
+
+      val propForTreeMaker2: Map[Symbol, Prop] = propForTreeMaker.collect {
+        case (ProductExtractorTreeMaker(prev, _), prop) => prev -> prop
+        case (EqualityTestTreeMaker(prev, _ ,_), prop) => prev -> prop
+        case (TypeTestTreeMaker(prev, _ ,_, _), prop) => prev -> prop
+      }.toMap
+
+
+      val substitutions: List[(List[Symbol], List[Tree])] = propForTreeMaker.map {
+          case (maker, prop) =>
+          maker.substitution.from -> maker.substitution.to
+      }
+
+      val propForTreeMaker3: Map[Symbol, Prop] = propForTreeMaker2.flatMap {
+        case (symbol: Symbol, prop: Prop) =>
+          substitutions.collect {
+            case (Seq(`symbol`), Seq(tree)) =>
+              tree.symbol -> prop
+          }
       }
 
       val deps = (cases.flatten.collect {
         case maker: ProductExtractorTreeMaker => maker.subPatBinders.map {
-          symbol => maker.prevBinder -> symbol
+          symbol => maker -> propForTreeMaker2(symbol)
         }
       }).flatten.distinct
 
-      val deps2 = symbolicCases0 map {
+      val deps2 = (symbolicCases0 map {
         (tests: List[Test]) =>
-          val a: List[(Prop, Symbol)] = tests.collect {
+          val a = tests.collect {
             case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders.map {
-              symbol => p -> symbol
+              symbol => maker.prevBinder -> symbol
+            }
+          }.flatten
+          a
+      }).flatten
+
+      val deps5 = deps2.map {
+        case (from, to) =>
+          propForTreeMaker3(from) -> propForTreeMaker2(to)
+      }
+
+      val deps4 = symbolicCases0 map {
+        (tests: List[Test]) =>
+          val a = tests.collect {
+            case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders.map {
+              symbol =>
+                val pp = propForTreeMaker2(symbol)
+//                val ppp = propForTreeMaker3.get(symbol).map(p => simplify(And(pp,p))).getOrElse(p)
+                maker.prevBinder -> pp
             }
           }.flatten
           a
       }
-
-      val deps3 = deps2.flatten.distinct
 
 //      symbolicCases.map {
 //        case prop: Prop => prop match {
@@ -889,7 +935,7 @@ trait MatchAnalysis extends MatchApproximation {
           if (shouldConstrainField) fields(symbol) = assign
           else {
             if (!b) {
-              println(s"seen invalid for $symbol")
+//              println(s"seen invalid for $symbol")
               seenInvalidAssign += symbol
             }
           }
@@ -930,7 +976,7 @@ trait MatchAnalysis extends MatchApproximation {
                           p.toCounterExample(brevity)
                       }
                       val a: Option[VariableAssignment] = fields.get(caseFieldAccs(i))
-                      println(s"caseFieldAccs(i): ${caseFieldAccs(i)}")
+//                      println(s"caseFieldAccs(i): ${caseFieldAccs(i)}")
                       map getOrElse {
 //                        if(seenInvalidAssign.nonEmpty) {
 //                          None
@@ -943,8 +989,8 @@ trait MatchAnalysis extends MatchApproximation {
                     i =>
                       seenInvalidAssign.nonEmpty
                   }
-                  println(s"seenInvalidAssign: $seenInvalidAssign")
-                  println(s"is $a invalid? $isInvalid")
+//                  println(s"seenInvalidAssign: $seenInvalidAssign")
+//                  println(s"is $a invalid? $isInvalid")
 //                  if(isInvalid) None else a
                   a
                 }

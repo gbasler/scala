@@ -334,7 +334,9 @@ trait Logic extends Debugging  {
     // TODO: for V1 representing x1 and V2 standing for x1.head, encode that
     //       V1 = Nil implies -(V2 = Ci) for all Ci in V2's domain (i.e., it is unassignable)
     // may throw an AnalysisBudget.Exception
-    def removeVarEq(props: List[Prop], modelNull: Boolean = false): (Prop, List[Prop]) = {
+    def removeVarEq(props: List[Prop],
+                    modelNull: Boolean = false/*,
+                    symbolicCases: List[List[Test]] = Nil*/): (Prop, List[Prop]) = {
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaVarEq) else null
 
       val vars = new mutable.HashSet[Var]
@@ -393,7 +395,7 @@ trait Logic extends Debugging  {
 //        println(props)
         println(s"${v} => " + v.implications.map {
           case (sym, syms, syms0) =>
-            s"($sym / ${foo(syms)} / ${foo(syms0)})"
+            s"(sym: $sym / implies: ${foo(syms)} / excluded: ${foo(syms0)})"
         }.mkString(", "))
       }
 
