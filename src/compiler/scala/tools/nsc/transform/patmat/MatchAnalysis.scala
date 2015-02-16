@@ -512,7 +512,7 @@ trait MatchAnalysis extends MatchApproximation {
       val symbolicCases: List[Prop] = symbolicCases1.unzip._2
 
       // substitutions seem to be valid only for one case!
-      val deps: List[List[(Prop, Prop)]] = symbolicCases0 map {
+      val deps: List[(Eq, Eq)] = symbolicCases0 flatMap {
         (tests: List[Test]) =>
           val substitutions = tests.map {
             case Test(p, maker) =>
@@ -543,7 +543,7 @@ trait MatchAnalysis extends MatchApproximation {
                 val pp = propForTreeMaker2(symbol)
                 //                val ppp = propForTreeMaker3.get(symbol).map(p => simplify(And(pp,p))).getOrElse(p)
                 val prop = propForTreeMaker3(maker.prevBinder)
-                simplify(prop) -> pp
+                simplify(prop).asInstanceOf[Eq] -> pp.asInstanceOf[Eq]
             }
           }.flatten
           dep
@@ -590,13 +590,12 @@ trait MatchAnalysis extends MatchApproximation {
 //        println(matchFails)
 //        println(simplify(matchFails))
         // TODO: add pointers to outers here?
-        val (eqAxiom, pure :: Nil) = removeVarEq(List(matchFails), modelNull = false)
+        val (eqAxiom, pure :: Nil) = removeVarEq(List(matchFails), modelNull = false, deps)
         // eqAxiom knows the domain of the variables!
         // proof: contains no A2!
         // Not(Or(Set(And(Set(And(Set(True, Eq(V1,Test.One))), True, Eq(V2,A1), Eq(V3,B1))), And(Set(And(Set(True, Eq(V1,Test.Two))), True, Eq(V3,B1), Eq(V2,A1))))))
         // eqAxiom contains A2!
         // And(Set(Or(Set(V3=B1#12, V3=Test.B2.type#14)), Or(Set(V2=A1#11, V2=Test.A2.type#15)), Or(Set(V1=Test.One#10, V1=Test.Two#13))))
-
 
         // after here implication etc is valid
         val matchFailModels = findAllModelsFor(propToSolvable(matchFails))

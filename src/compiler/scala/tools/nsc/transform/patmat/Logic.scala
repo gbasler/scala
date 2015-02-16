@@ -335,8 +335,8 @@ trait Logic extends Debugging  {
     //       V1 = Nil implies -(V2 = Ci) for all Ci in V2's domain (i.e., it is unassignable)
     // may throw an AnalysisBudget.Exception
     def removeVarEq(props: List[Prop],
-                    modelNull: Boolean = false/*,
-                    symbolicCases: List[List[Test]] = Nil*/): (Prop, List[Prop]) = {
+                    modelNull: Boolean = false,
+                    deps: List[(Eq, Eq)] = Nil): (Prop, List[Prop]) = {
       val start = if (Statistics.canEnable) Statistics.startTimer(patmatAnaVarEq) else null
 
       val vars = new mutable.HashSet[Var]
@@ -402,7 +402,16 @@ trait Logic extends Debugging  {
 //      println(s"eqAxioms:\n${eqAxioms.mkString("\n")}")
 //      println(s"pure:${pure.mkString("\n")}")
 
-
+      deps.foreach {
+        case (from: Eq, to: Eq) =>
+          val p: PropositionalLogic.this.type#Prop = rewriteEqualsToProp(from)
+          val syms = to.p.domainSyms.toSet
+          syms.map {
+            (syms: Set[Sym]) =>
+              val s = syms.toSeq :+ Not(p)
+              addAxiom(Or(s: _*))
+          }
+      }
 
 
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaVarEq, start)
