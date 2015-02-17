@@ -538,12 +538,14 @@ trait MatchAnalysis extends MatchApproximation {
           }
 
           val dep = tests.collect {
-            case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders.map {
+            case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders flatMap  {
               symbol =>
                 val pp = propForTreeMaker2(symbol)
                 //                val ppp = propForTreeMaker3.get(symbol).map(p => simplify(And(pp,p))).getOrElse(p)
-                val prop = propForTreeMaker3(maker.prevBinder)
-                simplify(prop).asInstanceOf[Eq] -> pp.asInstanceOf[Eq]
+                val prop = propForTreeMaker3.get(maker.prevBinder)
+                prop.map {
+                  prop => simplify(prop).asInstanceOf[Eq] -> pp.asInstanceOf[Eq]
+                }
             }
           }.flatten
           dep
@@ -598,55 +600,11 @@ trait MatchAnalysis extends MatchApproximation {
         // And(Set(Or(Set(V3=B1#12, V3=Test.B2.type#14)), Or(Set(V2=A1#11, V2=Test.A2.type#15)), Or(Set(V1=Test.One#10, V1=Test.Two#13))))
 
         // after here implication etc is valid
-        val matchFailModels = findAllModelsFor(propToSolvable(matchFails))
-
-
-        val vars: List[Set[Var]] = symbolicCases.map {
-          p => gatherVariables(p)
-        }
-
-        val doms = vars.map(_.map{
-          v => v.domain
-        })
-
-        val eq: List[Set[Eq]] = symbolicCases.map {
-          p => gatherEqualities(p)
-        }
-
-        val r = eq.map {
-          _.map {
-            case Eq(v, c) =>
-              v.domain
-              val tpe = c.tp
-             val declarations = tpe.declarations
-             val ctor = declarations.collectFirst {
-               case m: MethodSymbol if m.isPrimaryConstructor => m
-             }.get
-             val paramss: List[List[Symbol]] = ctor.paramss
-             val params: List[Symbol] = paramss.head
-             params.map {
-               s =>
-                 val a = s.tpe
-                 val b = s.baseClasses
-                 a
-             }
-              (v.path, v.domain, params)
-          }
-        }
-
-        case class VariableAssignment(variable: Var) {
-          // need to prune since the model now incorporates all super types of a constant (needed for reachability)
-//          private lazy val inSameDomain = uniqueEqualTo forall (const => variable.domainSyms.exists(_.exists(_.const.tp =:= const.tp)))
-//          private lazy val prunedEqualTo = uniqueEqualTo filterNot (subsumed => variable.staticTpCheckable <:< subsumed.tp)
-//          private lazy val ctor = (prunedEqualTo match {
-//            case List(TypeConst(tp)) => tp
-//            case _ => variable.staticTpCheckable
-//          }).typeSymbol.primaryConstructor
-//          private lazy val ctorParams = if (ctor.paramss.isEmpty) Nil else ctor.paramss.head
-//          private lazy val cls = ctor.safeOwner
-//          private lazy val caseFieldAccs: List[Symbol] = cls.caseFieldAccessors
-        }
-
+        println(eqAxiom.toString)
+        println(pure.toString)
+        val solvable = eqFreePropToSolvable(And(eqAxiom, pure))
+//        val solvable = propToSolvable(matchFails)
+        val matchFailModels = findAllModelsFor(solvable)
 
         val scrutVar = Var(prevBinderTree)
         val counterExamples = {
