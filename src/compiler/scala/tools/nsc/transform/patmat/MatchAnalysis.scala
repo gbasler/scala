@@ -592,6 +592,9 @@ trait MatchAnalysis extends MatchApproximation {
 //        println(matchFails)
 //        println(simplify(matchFails))
         // TODO: add pointers to outers here?
+        println("matchFails")
+        println(propToString(matchFails))
+
         val (eqAxiom, pure :: Nil) = removeVarEq(List(matchFails), modelNull = false, deps)
         // eqAxiom knows the domain of the variables!
         // proof: contains no A2!
@@ -600,8 +603,10 @@ trait MatchAnalysis extends MatchApproximation {
         // And(Set(Or(Set(V3=B1#12, V3=Test.B2.type#14)), Or(Set(V2=A1#11, V2=Test.A2.type#15)), Or(Set(V1=Test.One#10, V1=Test.Two#13))))
 
         // after here implication etc is valid
-        println(eqAxiom.toString)
-        println(pure.toString)
+        println("eqAxiom")
+        println(propToString(eqAxiom))
+        println("pure")
+        println(propToString(pure))
         val solvable = eqFreePropToSolvable(And(eqAxiom, pure))
 //        val solvable = propToSolvable(matchFails)
         val matchFailModels = findAllModelsFor(solvable)

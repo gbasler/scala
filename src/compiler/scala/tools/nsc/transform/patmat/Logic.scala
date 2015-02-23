@@ -402,16 +402,16 @@ trait Logic extends Debugging  {
 //      println(s"eqAxioms:\n${eqAxioms.mkString("\n")}")
 //      println(s"pure:${pure.mkString("\n")}")
 
-      deps.foreach {
-        case (from: Eq, to: Eq) =>
-          val p: PropositionalLogic.this.type#Prop = rewriteEqualsToProp(from)
-          val syms = to.p.domainSyms.toSet
-          syms.map {
-            (syms: Set[Sym]) =>
-              val s = syms.toSeq :+ Not(p)
-              addAxiom(Or(s: _*))
-          }
-      }
+//      deps.foreach {
+//        case (from: Eq, to: Eq) =>
+//          val p: PropositionalLogic.this.type#Prop = rewriteEqualsToProp(from)
+//          val syms = to.p.domainSyms.toSet
+//          syms.map {
+//            (syms: Set[Sym]) =>
+//              val s = syms.toSeq :+ Not(p)
+//              addAxiom(Or(s: _*))
+//          }
+//      }
 
 
       if (Statistics.canEnable) Statistics.stopTimer(patmatAnaVarEq, start)
@@ -437,6 +437,25 @@ trait Logic extends Debugging  {
     def findModelFor(solvable: Solvable): Model
 
     def findAllModelsFor(solvable: Solvable): List[Solution]
+
+    def propToString(p: Prop, indent: Int = 0): String = {
+      def >>> = " " * indent
+      p match {
+        case Eq(p, q) => >>> + p.toString
+        case And(ops) =>
+          val map = ops.toSeq.map(o => propToString(o, indent + 1))
+          >>> + "And(\n" + map.mkString("\n") + >>> + "\n)"
+        case Or(ops)  =>
+          val map = ops.toSeq.map(o => propToString(o, 0))
+          >>> + "Or(" + map.mkString(",") + >>> + ")"
+        case Not(a)   =>
+          >>> + "Not(" + propToString(a, 0) + >>> + ")"
+        case True     => >>> + "True"
+        case False    => >>> + "False"
+        case s: Sym   => >>> + s"$s"
+        case _        => ???
+      }
+    }
   }
 }
 

@@ -1,31 +1,29 @@
-sealed abstract class Expr
+object Test {
 
-sealed abstract class BinOp
+  sealed abstract class Expr
 
-case object Equiv extends BinOp
+  sealed abstract class BinOp
 
-case object Xor extends BinOp
+  case object Equiv extends BinOp
 
-sealed abstract class NOp
+  case object Xor extends BinOp
 
-case object And extends NOp
+  sealed abstract class NOp
 
-case object Or extends NOp
+  case object And extends NOp
 
-final case class BinaryOp(op: BinOp, a: Expr, b: Expr) extends Expr
+  case object Or extends NOp
 
-final case class NaryOp(op: NOp, ops: Seq[Expr]) extends Expr
+  final case class BinaryOp(op: BinOp, a: Expr, b: Expr) extends Expr
 
-class Test {
+  final case class NaryOp(op: NOp, ops: Seq[Expr]) extends Expr
 
-  var e: Expr = null
-  e match {
+  def foo(e: Expr): Unit = e match {
     case BinaryOp(Equiv, a, b) =>
-    case BinaryOp(Xor, a, b) =>
-    case NaryOp(Or, ops) =>
-    case NaryOp(And, ops) =>
+    case BinaryOp(Xor, a, b)   =>
+    case NaryOp(Or, ops)       =>
+    case NaryOp(And, ops)      =>
   }
-
 
 }
 
