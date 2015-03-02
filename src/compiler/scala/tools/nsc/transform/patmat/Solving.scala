@@ -130,20 +130,23 @@ trait Solving extends Logic {
 
       def apply(p: Prop): Solvable = {
 
-        def convert(p: Prop): Lit = {
+        def convert(p: Prop): Option[Lit] = {
           p match {
             case And(fv)  =>
-              and(fv.map(convert))
+              Some(and(fv.flatMap(convert)))
             case Or(fv)   =>
-              or(fv.map(convert))
+              Some(or(fv.flatMap(convert)))
             case Not(a)   =>
-              not(convert(a))
+              convert(a).map(not)
             case sym: Sym =>
-              convertSym(sym)
+              Some(convertSym(sym))
             case True     =>
-              constTrue
+              Some(constTrue)
             case False    =>
-              constFalse
+              Some(constFalse)
+            case Xor(ops) =>
+              xor(ops)
+              None
             case _: Eq    =>
               throw new MatchError(p)
           }
@@ -189,8 +192,46 @@ trait Solving extends Logic {
         // no need for auxiliary variable
         def not(a: Lit): Lit = -a
 
+        /**
+         * This encoding adds (n-1)*k variables (n is the number of variables in the
+         * at most constraint and k is the degree of the constraint) and 2nk+n-3k-1
+         * clauses.
+         * See also "An Efficient Encoding of the at-most-one Constraint"
+         * http://www.wv.inf.tu-dresden.de/Publications/2013/report-13-04.pdf
+         */
+        // TODO: unit test this code!!! comment it!!!
+        def xor(ops: List[Sym]) {
+          ops match {
+            case hd :: Nil  => convertSym(hd)
+            case x1 :: tail =>
+
+              @inline
+              def /\(a: Lit, b: Lit) = addClauseProcessed(clause(a, b))
+
+              val (mid, xn :: Nil) = tail.splitAt(tail.size - 1)
+
+              // 1 <= x1,...,xn <==>
+              //
+              // (!x1 \/ s1) /\ (!xn \/ !sn-1)
+              //      /\ (!xi \/ si) /\ (!si-1 \/ si) /\ (!xi \/ !si-1)
+              //   1 < i < n
+              val s1 = newLiteral()
+              /\(-convertSym(x1), s1)
+              val snMinus = mid.foldLeft(s1) {
+                case (siMinus, sym) =>
+                  val xi = convertSym(sym)
+                  val si = newLiteral()
+                  /\(-xi, si)
+                  /\(-siMinus, si)
+                  /\(-xi, -siMinus)
+                  si
+              }
+              /\(-convertSym(xn), -snMinus)
+          }
+        }
+
         // add intermediate variable since we want the formula to be SAT!
-        addClauseProcessed(clause(convert(p)))
+        addClauseProcessed(convert(p).toSet)
 
         Solvable(buildCnf, symbolMapping)
       }

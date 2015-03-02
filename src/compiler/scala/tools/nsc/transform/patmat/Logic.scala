@@ -117,6 +117,9 @@ trait Logic extends Debugging  {
 
     final case class Not(a: Prop) extends Prop
 
+    // mutually exclusive (i.e., at most one)
+    final case class Xor(ops: List[Sym]) extends Prop
+
     case object True extends Prop
     case object False extends Prop
 
@@ -191,7 +194,8 @@ trait Logic extends Debugging  {
         case Not(negated) => negationNormalFormNot(negated)
         case True
              | False
-             | (_: Sym)   => p
+             | (_: Sym)
+             | (_: Xor)   => p
       }
 
       def simplifyProp(p: Prop): Prop = p match {
@@ -357,6 +361,11 @@ trait Logic extends Debugging  {
           implied  foreach (impliedSym  => addAxiom(Or(Not(sym), impliedSym)))
           // ... and what must not?
           excluded foreach (excludedSym => addAxiom(Or(Not(sym), Not(excludedSym))))
+        }
+
+        // all symbols in a domain are mutually exclusive
+        v.domainSyms.foreach {
+          syms => addAxiom(Xor(syms.toList))
         }
       }
 
@@ -557,10 +566,14 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
           override def hashCode = a.hashCode ^ b.hashCode
         }
 
-        equalitySyms map { sym =>
+        // TODO: does this make sense or are all equalitySyms in a domain???
+        val equalitySymsOutsideDomain = equalitySyms filterNot {
+          sym => domainSyms.exists(_.contains(sym))
+        }
+        equalitySymsOutsideDomain map { sym =>
           // if we've already excluded the pair at some point (-A \/ -B), then don't exclude the symmetric one (-B \/ -A)
           // (nor the positive implications -B \/ A, or -A \/ B, which would entail the equality axioms falsifying the whole formula)
-          val todo = equalitySyms filterNot (b => (b.const == sym.const) || excludedPair(ExcludedPair(b.const, sym.const)))
+          val todo = equalitySymsOutsideDomain filterNot (b => (b.const == sym.const) || excludedPair(ExcludedPair(b.const, sym.const)))
           val (excluded, notExcluded) = todo partition (b => excludes(sym.const, b.const))
           val implied = notExcluded filter (b => implies(sym.const, b.const))
 
