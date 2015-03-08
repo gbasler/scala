@@ -151,6 +151,15 @@ trait TreeAndTypeAnalysis extends Debugging {
 
     def enumerateExclusiveSubtypes(tp: Type): List[List[Type]] =
       tp.typeSymbol match {
+        case sym: RefinementClassSymbol =>
+          val parentSubtypes: List[List[Type]] = tp.parents.flatMap(parent => enumerateExclusiveSubtypes(parent))
+          if (parentSubtypes exists (_.nonEmpty)) {
+            // If any of the parents is enumerable, then the refinement type is enumerable.
+//            val a: List[Nothing] = parentSubtypes flatten
+              // We must only include subtypes of the parents that conform to `tp`.
+              // See neg/virtpatmat_exhaust_compound.scala for an example.
+            parentSubtypes map (_.filter(_ <:< tp))
+          } else List()
         case sym if sym.isSealed =>
 
           def sealedChildren(sym: Symbol) = {

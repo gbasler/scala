@@ -364,12 +364,19 @@ trait Logic extends Debugging  {
           // when sym is true, what must hold...
           implied  foreach (impliedSym  => addAxiom(Or(Not(sym), impliedSym)))
           // ... and what must not?
-          excluded foreach (excludedSym => addAxiom(Or(Not(sym), Not(excludedSym))))
+          excluded foreach {
+            excludedSym =>
+              val exclusive = v.exclusiveDomains.exists {
+                domain => domain.contains(sym) && domain.contains(excludedSym)
+              }
+              if (!exclusive)
+                addAxiom(Or(Not(sym), Not(excludedSym)))
+          }
         }
 
         // all symbols in a domain are mutually exclusive
         v.exclusiveDomains.foreach {
-          syms => addAxiom(Xor(syms.toList))
+          syms => if (syms.size > 1) addAxiom(Xor(syms.toList))
         }
       }
 
@@ -466,11 +473,16 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
         val subtypes = enumerateExclusiveSubtypes(staticTp)
         subtypes.map {
           subTypes =>
-            val s = subTypes.map {
-              tpe =>
-                val sym: Sym = symForEqualsTo(TypeConst(tpe))
-                sym
-            }
+            val s = subTypes.flatMap(tpe => symForEqualsTo.get(TypeConst(tpe)))
+//            val s = subTypes.map {
+//              tpe =>
+                          // would fail for aladdinxx
+//                val sym = symForEqualsTo.get(TypeConst(tpe)).getOrElse {
+//                  println(symForEqualsTo)
+//                  sys.error(s"Can't find symbold for $tpe")
+//                }
+//                sym
+//            }
             if (mayBeNull) symForEqualsTo(NullConst) :: s else s
         }.filter(_.nonEmpty)
       }
@@ -583,11 +595,6 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
           override def hashCode = a.hashCode ^ b.hashCode
         }
 
-        // TODO: does this make sense or are all equalitySyms in a domain???
-        val equalitySymsOutsideDomain = equalitySyms filterNot {
-          sym => domainSyms.exists(_.contains(sym))
-        }
-
         equalitySyms map { sym =>
           // if we've already excluded the pair at some point (-A \/ -B), then don't exclude the symmetric one (-B \/ -A)
           // (nor the positive implications -B \/ A, or -A \/ B, which would entail the equality axioms falsifying the whole formula)
@@ -599,17 +606,7 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
           debug.patmat("excluded: "+ excluded)
           debug.patmat("implied: "+ implied)
 
-          excluded foreach {
-            excludedSym =>
-              val exclusive = exclusiveDomains.exists {
-                domain => domain.contains(sym) && domain.contains(excludedSym)
-              }
-              if (exclusive) {
-                // same domain, will be filtered later
-              } else {
-                excludedPair += ExcludedPair(sym.const, excludedSym.const)
-              }
-          }
+          excluded foreach { excludedSym => excludedPair += ExcludedPair(sym.const, excludedSym.const)}
 
           (sym, implied, excluded)
         }
