@@ -89,6 +89,8 @@ trait Logic extends Debugging  {
       // compute the domain and return it (call registerNull first!)
       def domainSyms: Option[Set[Sym]]
 
+      def exclusiveDomains: List[List[Sym]]
+
       // the symbol for this variable being equal to its statically known type
       // (only available if registerEquality has been called for that type before)
       def symForStaticTp: Option[Sym]
@@ -365,7 +367,7 @@ trait Logic extends Debugging  {
         }
 
         // all symbols in a domain are mutually exclusive
-        v.domainSyms.foreach {
+        v.exclusiveDomains.foreach {
           syms => addAxiom(Xor(syms.toList))
         }
       }
@@ -457,6 +459,12 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
             subConsts
 
         observed(); allConsts
+      }
+
+      lazy val exclusiveDomains: List[List[Sym]] = {
+        enumerateExclusiveSubtypes(staticTp).map {
+          _.map(tpe => symForEqualsTo(TypeConst(tpe)))
+        }.filter(_.nonEmpty)
       }
 
       // populate equalitySyms

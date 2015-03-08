@@ -149,6 +149,29 @@ trait TreeAndTypeAnalysis extends Debugging {
           None
       }
 
+    def enumerateExclusiveSubtypes(tp: Type): List[List[Type]] =
+      tp.typeSymbol match {
+        case sym if sym.isSealed =>
+
+          def sealedChildren(sym: Symbol) = {
+            sym.children.toList
+              .sortBy(_.sealedSortName)
+              .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
+          }
+
+          def enumerateChildren(wl: List[Symbol],
+                                acc: List[List[Symbol]]): List[List[Symbol]] = wl match {
+            case hd :: tl =>
+              val children = sealedChildren(hd)
+              enumerateChildren(tl ++ children, acc :+ children)
+            case Nil      => acc
+          }
+
+          enumerateChildren(sym :: Nil, Nil).map(_.map(_.tpe))
+        case _                   =>
+          Nil
+      }
+
     // approximate a type to the static type that is fully checkable at run time,
     // hiding statically known but dynamically uncheckable information using existential quantification
     // TODO: this is subject to the availability of TypeTags (since an abstract type with a type tag is checkable at run time)
@@ -458,9 +481,9 @@ trait MatchAnalysis extends MatchApproximation {
           val toSolvable: Solvable = eqFreePropToSolvable(and)
           val model = findModelFor(toSolvable)
 
-          println(and)
-          println(toSolvable)
-          println(model)
+//          println(and)
+//          println(toSolvable)
+//          println(model)
 
           // debug.patmat("trying to reach:\n"+ cnfString(current.head) +"\nunder prefix:\n"+ cnfString(prefix))
           // if (NoModel ne model) debug.patmat("reached: "+ modelString(model))
