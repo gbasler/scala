@@ -255,6 +255,7 @@ trait Logic extends Debugging  {
         case Not(a) => apply(a)
         case Eq(a, b) => applyVar(a); applyConst(b)
         case s: Sym => applySymbol(s)
+        case Xor(ops) => ops.map(applySymbol)
         case _ =>
       }
       def applyVar(x: Var): Unit = {}

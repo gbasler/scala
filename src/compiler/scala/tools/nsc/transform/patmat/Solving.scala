@@ -64,7 +64,18 @@ trait Solving extends Logic {
       def size = symbols.size
     }
 
-    case class Solvable(cnf: Cnf, symbolMapping: SymbolMapping)
+    def cnfString(f: Array[Clause]): String
+
+    case class Solvable(cnf: Cnf, symbolMapping: SymbolMapping) {
+      override def toString: String = {
+        "Solvable\nLiterals:\n" +
+          (for {
+            (lit, sym) <- symbolMapping.symForVar.toSeq.sortBy(_._1)
+          } yield {
+            s"$lit -> $sym"
+          }).mkString("\n") + "Cnf:\n" + cnfString(cnf)
+      }
+    }
 
     trait CnfBuilder {
       private[this] val buff = ArrayBuffer[Clause]()
