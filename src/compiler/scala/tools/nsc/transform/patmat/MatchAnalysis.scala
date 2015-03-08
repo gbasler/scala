@@ -159,15 +159,32 @@ trait TreeAndTypeAnalysis extends Debugging {
               .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
           }
 
+          val tpApprox = typer.infer.approximateAbstracts(tp)
+          val pre = tpApprox.prefix
+
+          def filter(children: List[Symbol]): List[Type] = children flatMap { sym =>
+            // have to filter out children which cannot match: see ticket #3683 for an example
+            // compare to the fully known type `tp` (modulo abstract types),
+            // so that we can rule out stuff like: sealed trait X[T]; class XInt extends X[Int] --> XInt not valid when enumerating X[String]
+            // however, must approximate abstract types in
+
+            val memberType  = nestedMemberType(sym, pre, tpApprox.typeSymbol.owner)
+            val subTp       = appliedType(memberType, sym.typeParams.map(_ => WildcardType))
+            val subTpApprox = typer.infer.approximateAbstracts(subTp) // TODO: needed?
+            // debug.patmat("subtp"+(subTpApprox <:< tpApprox, subTpApprox, tpApprox))
+            if (subTpApprox <:< tpApprox) Some(checkableType(subTp))
+            else None
+          }
+
           def enumerateChildren(wl: List[Symbol],
-                                acc: List[List[Symbol]]): List[List[Symbol]] = wl match {
+                                acc: List[List[Type]]): List[List[Type]] = wl match {
             case hd :: tl =>
               val children = sealedChildren(hd)
-              enumerateChildren(tl ++ children, acc :+ children)
+              enumerateChildren(tl ++ children, acc :+ filter(children))
             case Nil      => acc
           }
 
-          enumerateChildren(sym :: Nil, Nil).map(_.map(_.tpe))
+          enumerateChildren(sym :: Nil, Nil)//.map(_.map(_.tpe))
         case _                   =>
           Nil
       }

@@ -619,22 +619,27 @@ class SolvingTest {
 
     val syms = b1 :: Nil
 
-    val nonXor = And(And(b2),
-      And(Or(Not(b1), b),
-        Or(bnull, b),
-        Or(Not(b1),
-          Not(bnull)),
-        Or(Not(b2), b),
-        Or(Not(b2), Not(bnull)),
-        Or(Not(b), Not(bnull)),
-        Or(b, b1, b2, bnull)),
-      Not(And(And(Not(bnull), b1), Not(bnull))))
-
-    val withXor = And(And(b2),
+    // mutually exclusive constraint...
+    // no b1 & b2 and b is not negated... why?
+    val nonXor = And(Not(And(And(Not(bnull), b1), Not(bnull))),
+      And(b2),
       And(Or(b, b1, b2, bnull),
         Or(bnull, b),
-        Xor(List(b, b1, b2, bnull))),
-      Not(And(And(Not(bnull), b1), Not(bnull))))
+        Or(Not(b1), b), // b1 -> b
+        Or(Not(b2), b), // b2 -> b => could just say (b1 \/ b2) -> b
+                        // !(b1 \/ b2) \/ b => not a good idea since
+                        // other form is already in CNF
+        Or(Not(b1), Not(bnull)),
+        Or(Not(b2), Not(bnull)),
+        Or(Not(b), Not(bnull)))
+    )
+
+    val withXor = And(Not(And(And(Not(bnull), b1), Not(bnull))),
+      And(b2),
+      And(Or(b, b1, b2, bnull),
+        Or(bnull, b),
+        Xor(List(b, b1, b2, bnull))) // does not make sense, since can be of type b and b1!!!
+    )
 
 
     val expected = TestSolver.TestSolver.findAllModelsFor(propToSolvable(nonXor)).flatMap(expandUnassigned)

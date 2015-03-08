@@ -11,6 +11,7 @@ import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
 import scala.reflect.internal.util.HashSet
+import scala.tools.nsc.Global
 
 trait Logic extends Debugging  {
   import PatternMatchingStats._
@@ -462,8 +463,15 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
       }
 
       lazy val exclusiveDomains: List[List[Sym]] = {
-        enumerateExclusiveSubtypes(staticTp).map {
-          _.map(tpe => symForEqualsTo(TypeConst(tpe)))
+        val subtypes = enumerateExclusiveSubtypes(staticTp)
+        subtypes.map {
+          subTypes =>
+            val s = subTypes.map {
+              tpe =>
+                val sym: Sym = symForEqualsTo(TypeConst(tpe))
+                sym
+            }
+            if (mayBeNull) symForEqualsTo(NullConst) :: s else s
         }.filter(_.nonEmpty)
       }
 
@@ -579,10 +587,11 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
         val equalitySymsOutsideDomain = equalitySyms filterNot {
           sym => domainSyms.exists(_.contains(sym))
         }
-        equalitySymsOutsideDomain map { sym =>
+
+        equalitySyms map { sym =>
           // if we've already excluded the pair at some point (-A \/ -B), then don't exclude the symmetric one (-B \/ -A)
           // (nor the positive implications -B \/ A, or -A \/ B, which would entail the equality axioms falsifying the whole formula)
-          val todo = equalitySymsOutsideDomain filterNot (b => (b.const == sym.const) || excludedPair(ExcludedPair(b.const, sym.const)))
+          val todo = equalitySyms filterNot (b => (b.const == sym.const) || excludedPair(ExcludedPair(b.const, sym.const)))
           val (excluded, notExcluded) = todo partition (b => excludes(sym.const, b.const))
           val implied = notExcluded filter (b => implies(sym.const, b.const))
 
@@ -590,7 +599,17 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
           debug.patmat("excluded: "+ excluded)
           debug.patmat("implied: "+ implied)
 
-          excluded foreach { excludedSym => excludedPair += ExcludedPair(sym.const, excludedSym.const)}
+          excluded foreach {
+            excludedSym =>
+              val exclusive = exclusiveDomains.exists {
+                domain => domain.contains(sym) && domain.contains(excludedSym)
+              }
+              if (exclusive) {
+                // same domain, will be filtered later
+              } else {
+                excludedPair += ExcludedPair(sym.const, excludedSym.const)
+              }
+          }
 
           (sym, implied, excluded)
         }
