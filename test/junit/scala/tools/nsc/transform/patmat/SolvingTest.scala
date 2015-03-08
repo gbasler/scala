@@ -5,7 +5,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
+import scala.collection.immutable.Iterable
 import scala.collection.mutable
+import scala.tools.nsc.transform.patmat.TestSolver
 import scala.tools.nsc.{Global, Settings}
 
 object TestSolver extends Logic with Solving {
@@ -125,7 +127,7 @@ object TestSolver extends Logic with Solving {
     /**
      * Old CNF conversion code, used for reference:
      * - convert formula into NNF
-     *   (i.e., no negated terms, only negated variables)
+     * (i.e., no negated terms, only negated variables)
      * - use distributive laws to convert into CNF
      */
     def eqFreePropToSolvableViaDistribution(p: Prop) = {
@@ -204,11 +206,44 @@ class SolvingTest {
 
   import scala.tools.nsc.transform.patmat.TestSolver.TestSolver._
 
-  implicit val Ord: Ordering[TestSolver.TestSolver.Model] = Ordering.by {
-    _.toSeq.sortBy(_.toString()).toIterable
+  object SymName {
+    def unapply(s: Sym): Option[String] = {
+      val Var(Tree(name)) = s.variable
+      Some(name)
+    }
   }
 
-  private def sym(name: String) = Sym(Var(Tree(name)), NullConst)
+  implicit val ModelOrd: Ordering[TestSolver.TestSolver.Model] = Ordering.by {
+    _.toSeq.sortWith {
+      case ((sym1, v1), (sym2, v2)) =>
+        val SymName(name1) = sym1
+        val SymName(name2) = sym2
+        if (name1 < name2)
+          true
+        else if (name1 > name2)
+          false
+        else
+          v1 < v2
+    }.toIterable
+  }
+
+  implicit val SolutionOrd: Ordering[TestSolver.TestSolver.Solution] =
+    Ordering.by(_.model)
+
+  def formatSolution(solution: Solution): String = {
+    formatModel(solution.model)
+  }
+
+  def formatModel(model: Model): String = {
+    (for {
+      (SymName(name), value) <- model
+    } yield {
+      val v = if (value) "T" else "F"
+      s"$name -> $v"
+    }).mkString(", ")
+  }
+
+  def sym(name: String) = Sym(Var(Tree(name)), NullConst)
 
   @Test
   def testSymCreation() {
@@ -550,6 +585,75 @@ class SolvingTest {
         assertEquals(tseitinNoUnassigned, expansionNoUnassigned)
     }
   }
+
+  def pairWiseEncoding(ops: List[Sym]) = {
+    And(ops.combinations(2).map {
+      case a :: b :: Nil => Or(Not(a), Not(b))
+    }.toSet[TestSolver.TestSolver.Prop])
+  }
+
+  @Test
+  def testAtMostOne() {
+    val dummySym = sym("dummy")
+    val pSym = sym("p")
+    val qSym = sym("q")
+    val rSym = sym("r")
+    val sSym = sym("s")
+    val syms = pSym :: qSym :: rSym :: sSym :: Nil
+    // expand unassigned variables
+    // (otherwise solutions can not be compared)
+    val expected = TestSolver.TestSolver.findAllModelsFor(propToSolvable(And(dummySym, pairWiseEncoding(syms)))).flatMap(expandUnassigned)
+    val actual = TestSolver.TestSolver.findAllModelsFor(propToSolvable(And(dummySym, Xor(syms)))).flatMap(expandUnassigned)
+    assertEquals(expected.toSet, actual.toSet)
+  }
+
+  @Test
+  def `formula of patmatexhaust`() {
+    // expand unassigned variables
+    // (otherwise solutions can not be compared)
+
+    val b = sym("V1=TestSealedExhaustive.this.B#4")
+    val b1 = sym("V1=TestSealedExhaustive.this.B1#2")
+    val b2 = sym("V1=B2#3")
+    val bnull = sym("V1=null#1")
+
+    val syms = b1 :: Nil
+
+    val nonXor = And(And(b2),
+      And(Or(Not(b1), b),
+        Or(bnull, b),
+        Or(Not(b1),
+          Not(bnull)),
+        Or(Not(b2), b),
+        Or(Not(b2), Not(bnull)),
+        Or(Not(b), Not(bnull)),
+        Or(b, b1, b2, bnull)),
+      Not(And(And(Not(bnull), b1), Not(bnull))))
+
+    val withXor = And(And(b2),
+      And(Or(b, b1, b2, bnull),
+        Or(bnull, b),
+        Xor(List(b, b1, b2, bnull))),
+      Not(And(And(Not(bnull), b1), Not(bnull))))
+
+
+    val expected = TestSolver.TestSolver.findAllModelsFor(propToSolvable(nonXor)).flatMap(expandUnassigned)
+    val actual = TestSolver.TestSolver.findAllModelsFor(propToSolvable(withXor)).flatMap(expandUnassigned)
+    println("*****")
+    println("expected")
+    val e: List[String] = expected.sorted.map(formatModel)
+    println(e.mkString("\n"))
+    println("actual")
+    val a: List[String] = actual.sorted.map(formatModel)
+    println(a.mkString("\n"))
+    val common = e.toSet.intersect(a.toSet)
+    println("only in expected:")
+    println((e.toSet -- common).toSeq.sorted.mkString("\n"))
+    println("only in actual:")
+    println((a.toSet -- common).toSeq.sorted.mkString("\n"))
+    assertEquals(expected.toSet, actual.toSet)
+  }
+
 }
 
 
