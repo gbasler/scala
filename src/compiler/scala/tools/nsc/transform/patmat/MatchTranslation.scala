@@ -99,7 +99,7 @@ trait MatchTranslation {
 
       private def bindingStep(sub: Symbol, subpattern: Tree) = step(SubstOnlyTreeMaker(sub, binder))(rebindTo(subpattern))
       private def equalityTestStep()                         = step(EqualityTestTreeMaker(binder, tree, pos))()
-      private def typeTestStep(sub: Symbol, subPt: Type)     = step(TypeTestTreeMaker(sub, binder, subPt, glbWith(subPt))(pos))()
+      private def typeTestStep(sub: Symbol, subPt: Type, outer: Tree)     = step(TypeTestTreeMaker(sub, binder, subPt, glbWith(subPt))(pos, outer))()
       private def alternativesStep(alts: List[Tree])         = step(AlternativesTreeMaker(binder, translatedAlts(alts), alts.head.pos))()
       private def translatedAlts(alts: List[Tree])           = alts map (alt => rebindTo(alt).translate())
       private def noStep()                                   = step()()
@@ -116,7 +116,7 @@ trait MatchTranslation {
         // it tests the type, checks the outer pointer and casts to the expected type
         // TODO: the outer check is mandated by the spec for case classes, but we do it for user-defined unapplies as well [SPEC]
         // (the prefix of the argument passed to the unapply must equal the prefix of the type of the binder)
-        lazy val typeTest = TypeTestTreeMaker(binder, binder, paramType, paramType)(pos, extractorArgTypeTest = true)
+        lazy val typeTest = TypeTestTreeMaker(binder, binder, paramType, paramType)(pos, tree, extractorArgTypeTest = true)
         // check whether typetest implies binder is not null,
         // even though the eventual null check will be on typeTest.nextBinder
         // it'll be equal to binder casted to paramType anyway (and the type test is on binder)
@@ -151,8 +151,8 @@ trait MatchTranslation {
       def nextStep(): TranslationStep = tree match {
         case WildcardPattern()                                        => noStep()
         case _: UnApply | _: Apply                                    => extractorStep()
-        case SymbolAndTypeBound(sym, tpe)                             => typeTestStep(sym, tpe)
-        case TypeBound(tpe)                                           => typeTestStep(binder, tpe)
+        case SymbolAndTypeBound(sym, tpe)                             => typeTestStep(sym, tpe, tree)
+        case TypeBound(tpe)                                           => typeTestStep(binder, tpe, tree)
         case SymbolBound(sym, expr)                                   => bindingStep(sym, expr)
         case Literal(Constant(_)) | Ident(_) | Select(_, _) | This(_) => equalityTestStep()
         case Alternative(alts)                                        => alternativesStep(alts)

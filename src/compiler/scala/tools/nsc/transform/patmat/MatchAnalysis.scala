@@ -538,13 +538,18 @@ trait MatchAnalysis extends MatchApproximation {
           }
 
           val dep = tests.collect {
-            case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders flatMap  {
+            case Test(p, maker: ProductExtractorTreeMaker) => maker.subPatBinders flatMap {
               symbol =>
-                val pp = propForTreeMaker2(symbol)
-                //                val ppp = propForTreeMaker3.get(symbol).map(p => simplify(And(pp,p))).getOrElse(p)
-                val prop = propForTreeMaker3.get(maker.prevBinder)
-                prop.map {
-                  prop => simplify(prop).asInstanceOf[Eq] -> pp.asInstanceOf[Eq]
+                propForTreeMaker2.get(symbol).fold {
+                  println(s"could not find $symbol")
+                  None : Option[(Eq, Eq)]
+                } {
+                  pp =>
+                    //                val ppp = propForTreeMaker3.get(symbol).map(p => simplify(And(pp,p))).getOrElse(p)
+                    val prop = propForTreeMaker3.get(maker.prevBinder)
+                    prop.map {
+                      prop => simplify(prop).asInstanceOf[Eq] -> pp.asInstanceOf[Eq]
+                    }
                 }
             }
           }.flatten
