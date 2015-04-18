@@ -386,11 +386,13 @@ trait Logic extends Debugging  {
             excludedSym =>
               val related = Set(sym, excludedSym)
               val exclusive = v.groupedDomains.exists {
-                domain => related subsetOf domain.toSet
+                domain => related subsetOf domain
               }
+              // TODO: this avoids a Set instantiation
+//              val exclusive0 = v.groupedDomains.exists {
+//                domain => domain.contains(sym) && domain.contains(excludedSym)
+//              }
 
-              // TODO: populate `v.exclusiveDomains` with `Set`s from the start, and optimize to:
-              // val exclusive = v.exclusiveDomains.exists { inDomain => inDomain(sym) && inDomain(excludedSym) }
               if (!exclusive)
                 addAxiom(Or(Not(sym), Not(excludedSym)))
           }
@@ -528,14 +530,18 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
          * i.e., when S <:< T we assume x.isInstanceOf[S] implies x.isInstanceOf[T]
          * unfortunately this is not true in general (see e.g. SI-6022)
          */
-        def implies(lower: Const, upper: Const): Boolean =
+        def implies(lower: Const, upper: Const): Boolean = {
+          val implies1: Boolean = instanceOfTpImplies(if (lower.isValue) lower.wideTp else lower.tp, upper.tp)
           // values and null
-            lower == upper ||
-          // type implication
+          val i = lower == upper ||
+            // type implication
             (lower != NullConst && !upper.isValue &&
-             instanceOfTpImplies(if (lower.isValue) lower.wideTp else lower.tp, upper.tp))
+              implies1)
+          println(s"$lower implies? $upper: $implies1")
+          i
+        }
 
-          // if(r) debug.patmat("implies    : "+(lower, lower.tp, upper, upper.tp))
+        // if(r) debug.patmat("implies    : "+(lower, lower.tp, upper, upper.tp))
           // else  debug.patmat("NOT implies: "+(lower, upper))
 
 
@@ -566,7 +572,10 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
           val bothInDomain  = domain exists (d => d(a) && d(b))
           val eitherIsNull  = a == NullConst || b == NullConst
           val bothAreValues = a.isValue && b.isValue
-          bothInDomain && (eitherIsNull || bothAreValues) && (a != b)
+
+          val e = bothInDomain && (eitherIsNull || bothAreValues) && (a != b)
+//          println(s"excludes $a, $b, bothInDomain = $bothInDomain, bothAreValues = $bothAreValues => $e")
+          e
         }
 
           // if(r) debug.patmat("excludes    : "+(a, a.tp, b, b.tp))
@@ -617,9 +626,9 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
           val (excluded, notExcluded) = todo partition (b => excludes(sym.const, b.const))
           val implied = notExcluded filter (b => implies(sym.const, b.const))
 
-          debug.patmat("eq axioms for: "+ sym.const)
-          debug.patmat("excluded: "+ excluded)
-          debug.patmat("implied: "+ implied)
+//          println("eq axioms for: "+ sym.const)
+//          println("excluded: "+ excluded)
+//          println("implied: "+ implied)
 
           excluded foreach { excludedSym => excludedPair += ExcludedPair(sym.const, excludedSym.const)}
 
