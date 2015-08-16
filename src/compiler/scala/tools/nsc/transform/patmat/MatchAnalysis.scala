@@ -7,7 +7,7 @@
 package scala.tools.nsc.transform.patmat
 
 import scala.annotation.tailrec
-import scala.collection.immutable.{IndexedSeq, Iterable}
+import scala.collection.immutable.{Queue, IndexedSeq, Iterable}
 import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
@@ -174,6 +174,97 @@ trait TreeAndTypeAnalysis extends Debugging {
           debug.patmat("enum unsealed "+ ((tp, sym, sym.isSealed, isPrimitiveValueClass(sym))))
           Nil
       }
+
+
+    // TODO: domain of other feasibly enumerable built-in types (char?)
+    def enumerateSubtypesBfs(tp: Type): List[List[Type]] = {
+      tp.typeSymbol match {
+        case sym: RefinementClassSymbol =>
+        // not sure what to do here...
+          Nil
+        case sym if sym.isSealed =>
+          val tpApprox = typer.infer.approximateAbstracts(tp)
+          val pre = tpApprox.prefix
+
+          def filterChildren(children: List[Symbol]): List[Type] = {
+            children flatMap { sym =>
+              // have to filter out children which cannot match: see ticket #3683 for an example
+              // compare to the fully known type `tp` (modulo abstract types),
+              // so that we can rule out stuff like: sealed trait X[T]; class XInt extends X[Int] --> XInt not valid when enumerating X[String]
+              // however, must approximate abstract types in
+
+              val memberType = nestedMemberType(sym, pre, tpApprox.typeSymbol.owner)
+              val subTp = appliedType(memberType, sym.typeParams.map(_ => WildcardType))
+              val subTpApprox = typer.infer.approximateAbstracts(subTp) // TODO: needed?
+              // debug.patmat("subtp"+(subTpApprox <:< tpApprox, subTpApprox, tpApprox))
+              if (subTpApprox <:< tpApprox) Some(checkableType(subTp))
+              else None
+            }
+          }
+
+          def enumerateChildren(sym: Symbol) = {
+            sym.children.toList
+              .sortBy(_.sealedSortName)
+              .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
+          }
+
+          val dag = mutable.Map[Symbol, Set[Symbol]]()
+          var wl = mutable.Queue[Symbol](sym)
+          while (wl.nonEmpty) {
+            // enumerate only direct subclasses,
+            // subclasses of subclasses are enumerated in the next iteration
+            // and added to a new group
+            val front = mutable.Queue[Symbol]()
+            while (wl.nonEmpty) {
+              val sym = wl.dequeue()
+              val a = filterChildren(List(sym))
+              val children = enumerateChildren(sym).toSet
+              val ts = children.toSeq.sliding(2).map {
+                case Seq(a,b) =>
+                  val c = a.tpe.baseTypeSeq
+                  val d = c.toList
+                  a.tpe <:< b.tpe
+              }.toIndexedSeq
+              if (!dag.contains(sym) && children.nonEmpty) {
+                dag += (sym -> children)
+                front ++= children
+              }
+            }
+            wl = front
+          }
+
+          val depths = mutable.Map[Symbol, Int]()
+
+          def depth(s: Symbol): Int = {
+            if (!depths.contains(s)) {
+              dag.get(s).fold(0) {
+                childs =>
+                  val d = childs.map(depth).max
+                  depths += (s -> d)
+                  d
+              }
+            } else {
+              depth(s)
+            }
+          }
+
+          depth(sym)
+
+          val pregrouped = dag.toList.map {
+            case (s, deps) => (depths(s), s, deps)
+          }.sortBy(_._1)
+
+          val group = pregrouped.map {
+            case (depth, s, deps) =>
+              filterChildren(deps.toList)
+          }
+          group
+
+        case sym =>
+          debug.patmat("enum unsealed " + ((tp, sym, sym.isSealed, isPrimitiveValueClass(sym))))
+          Nil
+      }
+    }
 
     // approximate a type to the static type that is fully checkable at run time,
     // hiding statically known but dynamically uncheckable information using existential quantification
