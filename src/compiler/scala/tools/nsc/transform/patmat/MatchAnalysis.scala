@@ -225,6 +225,8 @@ trait TreeAndTypeAnalysis extends Debugging {
                   val d = c.toList
                   a.tpe <:< b.tpe
               }.toIndexedSeq
+              val c = a.head.baseClasses.toList
+              val d = a.head.baseTypeSeq.toList     // that will work
               if (!dag.contains(sym) && children.nonEmpty) {
                 dag += (sym -> children)
                 front ++= children
