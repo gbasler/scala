@@ -208,32 +208,26 @@ trait TreeAndTypeAnalysis extends Debugging {
               .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
           }
 
-          val dag = mutable.Map[Symbol, Set[Symbol]]()
-          var wl = mutable.Queue[Symbol](sym)
+        case class Dep(s: Symbol, parents: Set[Symbol])
+
+          val deps = mutable.Map[Type, Set[Type]]()
+
+          // childs to parents
+          val wl = mutable.Queue[Symbol](sym)
           while (wl.nonEmpty) {
             // enumerate only direct subclasses,
             // subclasses of subclasses are enumerated in the next iteration
             // and added to a new group
-            val front = mutable.Queue[Symbol]()
-            while (wl.nonEmpty) {
-              val sym = wl.dequeue()
-              val a = filterChildren(List(sym))
-              val children = enumerateChildren(sym).toSet
-              val ts = children.toSeq.sliding(2).map {
-                case Seq(a,b) =>
-                  val c = a.tpe.baseTypeSeq
-                  val d = c.toList
-                  a.tpe <:< b.tpe
-              }.toIndexedSeq
-              val c = a.head.baseClasses.toList
-              val d = a.head.baseTypeSeq.toList     // that will work
-              if (!dag.contains(sym) && children.nonEmpty) {
-                dag += (sym -> children)
-                front ++= children
-              }
+            val sym = wl.dequeue()
+            val children = enumerateChildren(sym)
+            val filtered = filterChildren(children)
+            filtered.foreach {
+              c =>
+                if(!deps.contains(c))
+                  deps += (c -> c.baseTypeSeq.toList.toSet)
             }
-            wl = front
           }
+
 
           val depths = mutable.Map[Symbol, Int]()
 
