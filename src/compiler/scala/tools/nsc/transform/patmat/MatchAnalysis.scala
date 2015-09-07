@@ -202,7 +202,7 @@ trait TreeAndTypeAnalysis extends Debugging {
             }
           }
 
-          def enumerateChildren(sym: Symbol) = {
+          def enumerateChildren(sym: Symbol): List[Symbol] = {
             sym.children.toList
               .sortBy(_.sealedSortName)
               .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
@@ -220,42 +220,56 @@ trait TreeAndTypeAnalysis extends Debugging {
             // and added to a new group
             val sym = wl.dequeue()
             val children = enumerateChildren(sym)
-            val filtered = filterChildren(children)
-            filtered.foreach {
-              c =>
-                if(!deps.contains(c))
-                  deps += (c -> c.baseTypeSeq.toList.toSet)
-            }
+            wl ++= children
+            deps += (sym.tpe -> sym.tpe.baseTypeSeq.toList.toSet)
+            //val filtered: List[TreeAndTypeAnalysis.this.type#global#Type] = filterChildren(children)
+            //filtered.foreach {
+            //c =>
+              //  if(!deps.contains(c))
+                //  deps += (c -> c.baseTypeSeq.toList.toSet)
+            //}
           }
 
+          val reversed = {
+            val keys = deps.keySet
+            val reversed = mutable.Map[Type, Set[Type]]() withDefaultValue Set()
+            deps.foreach {
+              case (tpe, baseTypes) =>
+                keys.intersect(baseTypes).foreach {
+                  base => if(base != tpe )reversed(base) += tpe
+                }
+            }
+            reversed
+          }
 
-          val depths = mutable.Map[Symbol, Int]()
-
-          def depth(s: Symbol): Int = {
-            if (!depths.contains(s)) {
-              dag.get(s).fold(0) {
+          val depths = mutable.Map[Type, Int]()
+          //
+          def depth(tpe: Type): Int = {
+            if (!depths.contains(tpe)) {
+              val d = reversed.get(tpe).fold(0) {
                 childs =>
-                  val d = childs.map(depth).max
-                  depths += (s -> d)
+                  val d = childs.map(depth).max + 1
                   d
               }
+              depths += (tpe -> d)
+              d
             } else {
-              depth(s)
+              depths(tpe)
             }
           }
 
-          depth(sym)
+          deps.keys.foreach(depth)
 
-          val pregrouped = dag.toList.map {
-            case (s, deps) => (depths(s), s, deps)
-          }.sortBy(_._1)
-
-          val group = pregrouped.map {
-            case (depth, s, deps) =>
-              filterChildren(deps.toList)
-          }
-          group
-
+          val pregrouped = depths.toList.groupBy(_._2).toSeq.map {
+              case (i, tuples) => i -> tuples.unzip._1
+          } sortBy (_._1)
+//
+          val group = pregrouped //.filter(_._2.size > 1) //.map {
+            //case (depth, deps) =>
+              //filterChildren(deps)
+          //}
+          val res = group.unzip._2.toList
+          res
         case sym =>
           debug.patmat("enum unsealed " + ((tp, sym, sym.isSealed, isPrimitiveValueClass(sym))))
           Nil
