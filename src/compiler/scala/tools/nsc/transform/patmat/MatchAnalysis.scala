@@ -264,7 +264,7 @@ trait TreeAndTypeAnalysis extends Debugging {
               case (i, tuples) => i -> tuples.unzip._1
           } sortBy (_._1)
 //
-          val group = pregrouped //.filter(_._2.size > 1) //.map {
+          val group = pregrouped.filter(_._2.size > 1) //.map {
             //case (depth, deps) =>
               //filterChildren(deps)
           //}
