@@ -7,7 +7,7 @@
 package scala.tools.nsc.transform.patmat
 
 import scala.annotation.tailrec
-import scala.collection.immutable.{IndexedSeq, Iterable}
+import scala.collection.immutable.{Queue, IndexedSeq, Iterable}
 import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
@@ -174,6 +174,101 @@ trait TreeAndTypeAnalysis extends Debugging {
           debug.patmat("enum unsealed "+ ((tp, sym, sym.isSealed, isPrimitiveValueClass(sym))))
           Nil
       }
+
+
+    // TODO: domain of other feasibly enumerable built-in types (char?)
+    def enumerateSubtypesBfs(tp: Type): List[List[Type]] = {
+      tp.typeSymbol match {
+        case sym: RefinementClassSymbol =>
+        // not sure what to do here...
+          Nil
+        case sym if sym.isSealed =>
+          val tpApprox = typer.infer.approximateAbstracts(tp)
+          val pre = tpApprox.prefix
+
+          def filterChildren(children: List[Symbol]): List[Type] = {
+            children flatMap { sym =>
+              // have to filter out children which cannot match: see ticket #3683 for an example
+              // compare to the fully known type `tp` (modulo abstract types),
+              // so that we can rule out stuff like: sealed trait X[T]; class XInt extends X[Int] --> XInt not valid when enumerating X[String]
+              // however, must approximate abstract types in
+
+              val memberType = nestedMemberType(sym, pre, tpApprox.typeSymbol.owner)
+              val subTp = appliedType(memberType, sym.typeParams.map(_ => WildcardType))
+              val subTpApprox = typer.infer.approximateAbstracts(subTp) // TODO: needed?
+              // debug.patmat("subtp"+(subTpApprox <:< tpApprox, subTpApprox, tpApprox))
+              if (subTpApprox <:< tpApprox) Some(checkableType(subTp))
+              else None
+            }
+          }
+
+          def enumerateChildren(sym: Symbol): List[Symbol] = {
+            sym.children.toList
+              .sortBy(_.sealedSortName)
+              .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
+          }
+
+        case class Dep(s: Symbol, parents: Set[Symbol])
+
+          val deps = mutable.Map[Type, Set[Type]]()
+
+          // childs to parents
+          val wl = mutable.Queue[Symbol](sym)
+          while (wl.nonEmpty) {
+            // enumerate only direct subclasses,
+            // subclasses of subclasses are enumerated in the next iteration
+            // and added to a new group
+            val sym = wl.dequeue()
+            val children = enumerateChildren(sym)
+            wl ++= children
+            deps += (sym.tpe -> sym.tpe.baseTypeSeq.toList.toSet)
+            //val filtered: List[TreeAndTypeAnalysis.this.type#global#Type] = filterChildren(children)
+            //filtered.foreach {
+            //c =>
+              //  if(!deps.contains(c))
+                //  deps += (c -> c.baseTypeSeq.toList.toSet)
+            //}
+          }
+
+          val reversed = {
+            val keys = deps.keySet
+            val reversed = mutable.Map[Type, Set[Type]]() withDefaultValue Set()
+            deps.foreach {
+              case (tpe, baseTypes) =>
+                keys.intersect(baseTypes).foreach {
+                  base => if(base != tpe )reversed(base) += tpe
+                }
+            }
+            reversed
+          }
+
+          val depths = mutable.Map[Type, Int]()
+
+          def depth(tpe: Type): Int = {
+            if (!depths.contains(tpe)) {
+              val d = reversed.get(tpe).fold(0) {
+                childs =>
+                  val d = childs.map(depth).max + 1
+                  d
+              }
+              depths += (tpe -> d)
+              d
+            } else {
+              depths(tpe)
+            }
+          }
+
+          deps.keys.foreach(depth)
+
+          val res = depths.toList.groupBy(_._2).toList.map {
+            case (depth, group) => group.unzip._1
+          }
+          res
+        case sym =>
+          debug.patmat("enum unsealed " + ((tp, sym, sym.isSealed, isPrimitiveValueClass(sym))))
+          Nil
+      }
+    }
 
     // approximate a type to the static type that is fully checkable at run time,
     // hiding statically known but dynamically uncheckable information using existential quantification
