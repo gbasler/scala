@@ -7,7 +7,7 @@
 package scala.tools.nsc.transform.patmat
 
 import scala.annotation.tailrec
-import scala.collection.immutable.{IndexedSeq, Iterable}
+import scala.collection.immutable.{Queue, IndexedSeq, Iterable}
 import scala.language.postfixOps
 import scala.collection.mutable
 import scala.reflect.internal.util.Statistics
@@ -143,18 +143,60 @@ trait TreeAndTypeAnalysis extends Debugging {
                 .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
             }
 
-            // enumerate only direct subclasses,
-            // subclasses of subclasses are enumerated in the next iteration
-            // and added to a new group
-            def groupChildren(wl: List[Symbol],
-                              acc: List[List[Type]]): List[List[Type]] = wl match {
-              case hd :: tl =>
-                val children = enumerateChildren(hd)
-                groupChildren(tl ++ children, acc :+ filterChildren(children))
-              case Nil      => acc
+            val baseTypesForType = {
+              val baseTypesForType = mutable.Map[Type, Set[Type]]()
+
+              val wl = mutable.Queue[Type](sym.tpe)
+              while (wl.nonEmpty) {
+                // enumerate only direct subclasses,
+                // subclasses of subclasses are enumerated in the next iteration
+                // and added to a new group
+                val tpe = wl.dequeue()
+                val children = enumerateChildren(tpe.typeSymbol)
+                val filtered = filterChildren(children)
+                wl ++= filtered
+                baseTypesForType += (tpe -> tpe.baseTypeSeq.toList.toSet)
+              }
+              baseTypesForType
             }
 
-            groupChildren(sym :: Nil, Nil)
+            val childrenForType = {
+              val keys = baseTypesForType.keySet
+              val reversed = mutable.Map[Type, Set[Type]]() withDefaultValue Set()
+              baseTypesForType.foreach {
+                case (tpe, baseTypes) =>
+                  keys.intersect(baseTypes).foreach {
+                    base => if (base != tpe) reversed(base) += tpe
+                  }
+              }
+              reversed
+            }
+
+            // calculate for each type the height that is the height of the type tree
+            // e.g., the base type has height 0
+            val heightForType = {
+              val heights = mutable.Map[Type, Int]()
+
+              def assignHeight(tpe: Type): Int = {
+                if (!heights.contains(tpe)) {
+                  val height = childrenForType.get(tpe).fold(0)(_.map(assignHeight).max + 1)
+                  heights += (tpe -> height)
+                  height
+                } else {
+                  heights(tpe)
+                }
+              }
+
+              childrenForType.keys.foreach(assignHeight)
+
+              heights
+            }
+
+            // we put only children into the same exclusive group that have the same height
+            // thus no parent can be in the same group as any child
+            heightForType.toList.groupBy(_._2).toList.map {
+              case (depth, group) => group.unzip._1
+            }
           } else {
             val subclasses = debug.patmatResult(s"enum $sym sealed, subclasses")(
               // symbols which are both sealed and abstract need not be covered themselves, because
