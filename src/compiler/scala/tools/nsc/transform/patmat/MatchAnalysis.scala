@@ -143,60 +143,20 @@ trait TreeAndTypeAnalysis extends Debugging {
                 .filterNot(x => x.isSealed && x.isAbstractClass && !isPrimitiveValueClass(x))
             }
 
-            val baseTypesForType = {
-              val baseTypesForType = mutable.Map[Symbol, Set[Symbol]]()
-
-              val wl = mutable.Queue[Symbol](sym)
-              while (wl.nonEmpty) {
-                // enumerate only direct subclasses,
-                // subclasses of subclasses are enumerated in the next iteration
-                // and added to a new group
-                val sym = wl.dequeue()
-                val children = enumerateChildren(sym)
-                val filtered = filterChildren(children)
-                wl ++= filtered.map(_.typeSymbol)
-                baseTypesForType += (sym -> sym.tpe.baseTypeSeq.toList.map(_.typeSymbol).toSet)
-              }
-              baseTypesForType
+            // enumerate only direct subclasses,
+            // subclasses of subclasses are enumerated in the next iteration
+            // and added to a new group
+            def groupChildren(wl: List[Symbol],
+                              acc: List[List[Type]]): List[List[Type]] = wl match {
+              case hd :: tl =>
+                val children = enumerateChildren(hd)
+                val (traits, nonTraits) = children.partition(_.isTrait)
+                val filtered = (traits.map(List(_)) ++ List(nonTraits)).map(filterChildren)
+                groupChildren(tl ++ children, acc ++ filtered)
+              case Nil      => acc
             }
 
-            val childrenForType = {
-              val keys = baseTypesForType.keySet
-              val reversed = mutable.Map[Symbol, Set[Symbol]]() withDefaultValue Set()
-              baseTypesForType.foreach {
-                case (tpe, baseTypes) =>
-                  keys.intersect(baseTypes).foreach {
-                    base => if (base != tpe) reversed(base) += tpe
-                  }
-              }
-              reversed
-            }
-
-            // calculate for each type the height that is the height of the type tree
-            // e.g., the base type has height 0
-            val heightForType = {
-              val heights = mutable.Map[Symbol, Int]()
-
-              def assignHeight(sym: Symbol): Int = {
-                if (!heights.contains(sym)) {
-                  val height = childrenForType.get(sym).fold(0)(_.map(assignHeight).max + 1)
-                  heights += (sym -> height)
-                  height
-                } else {
-                  heights(sym)
-                }
-              }
-
-              childrenForType.keys.foreach(assignHeight)
-
-              heights
-            }
-
-            // we put only children into the same exclusive group that have the same height
-            // thus no parent can be in the same group as any child
-            heightForType.toList.groupBy(_._2).toList.map {
-              case (depth, group) => group.unzip._1.map(_.tpe)
-            }
+            groupChildren(sym :: Nil, Nil)
           } else {
             val subclasses = debug.patmatResult(s"enum $sym sealed, subclasses")(
               // symbols which are both sealed and abstract need not be covered themselves, because
